@@ -1,4 +1,4 @@
-package com.lucasalfare.flrpg
+package com.lucasalfare.flrpg.server
 
 @JvmInline
 value class ThingId(val value: String) {
