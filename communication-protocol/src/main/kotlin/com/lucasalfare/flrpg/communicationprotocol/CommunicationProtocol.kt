@@ -78,7 +78,7 @@ value class Sequence(val value: Long) : Comparable<Sequence> {
 
   companion object {
     val ZERO = Sequence(0L)
-    const val HALF_MAX_VALUE: Long = Long.MAX_VALUE / 2
+    internal const val HALF_MAX_VALUE: Long = Long.MAX_VALUE / 2
   }
 }
 
@@ -609,14 +609,10 @@ class ResyncHandler {
   }
 }
 
-fun SequenceTracker.alignToSnapshot(snapshot: PresentationSnapshot) {
-  reset(snapshot.sequence.next())
-}
-
 fun PresentationDocument.applyResync(
   snapshot: PresentationSnapshot, sequenceTracker: SequenceTracker
 ): PresentationDocument {
-  sequenceTracker.alignToSnapshot(snapshot)
+  sequenceTracker.reset(snapshot.sequence.next())
   return snapshot.document
 }
 
