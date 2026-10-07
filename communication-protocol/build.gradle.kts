@@ -1,5 +1,6 @@
 plugins {
   kotlin("jvm") version "2.3.0"
+  kotlin("plugin.serialization") version "2.3.20"
 }
 
 group = "com.lucasalfare"
@@ -10,6 +11,7 @@ repositories {
 }
 
 dependencies {
+  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0-RC")
   testImplementation(kotlin("test"))
 }
 
