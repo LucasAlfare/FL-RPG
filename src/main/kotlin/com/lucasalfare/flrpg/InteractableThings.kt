@@ -39,3 +39,18 @@ class BasicThing(
     currentState = newState
   }
 }
+
+@JvmInline
+value class ParticipantId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "ParticipantId cannot be blank" }
+  }
+}
+
+interface Participant {
+  val id: ParticipantId
+}
+
+class BasicParticipant(
+  override val id: ParticipantId
+) : Participant
