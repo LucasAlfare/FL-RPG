@@ -62,16 +62,47 @@ value class InteractionId(val value: String) {
   }
 }
 
+interface InteractionContext {
+  fun findThing(id: ThingId): Thing?
+  fun findParticipant(id: ParticipantId): Participant?
+}
+
+fun interface InteractionCondition {
+  fun isSatisfied(interaction: Interaction, context: InteractionContext): Boolean
+}
+
+class AllInteractionConditions(
+  private val conditions: List<InteractionCondition>
+) : InteractionCondition {
+  override fun isSatisfied(interaction: Interaction, context: InteractionContext): Boolean {
+    return conditions.all { it.isSatisfied(interaction, context) }
+  }
+}
+
+class AnyInteractionConditions(
+  private val conditions: List<InteractionCondition>
+) : InteractionCondition {
+  override fun isSatisfied(interaction: Interaction, context: InteractionContext): Boolean {
+    return conditions.any { it.isSatisfied(interaction, context) }
+  }
+}
+
 interface Interaction {
   val id: InteractionId
   val capabilityId: CapabilityId
   val targetId: ThingId
   val participantId: ParticipantId
+  val conditions: Set<InteractionCondition>
+
+  fun isAvailable(context: InteractionContext): Boolean {
+    return conditions.all { it.isSatisfied(this, context) }
+  }
 }
 
 class BasicInteraction(
   override val id: InteractionId,
   override val capabilityId: CapabilityId,
   override val targetId: ThingId,
-  override val participantId: ParticipantId
+  override val participantId: ParticipantId,
+  override val conditions: Set<InteractionCondition> = emptySet()
 ) : Interaction
