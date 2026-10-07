@@ -289,3 +289,46 @@ data class BasicObservationContext(
 ) : ObservationContext {
   override fun getInteractionContext(): InteractionContext = interactionContext
 }
+
+enum class ObservabilityStatus {
+  NOT_OBSERVABLE, OBSERVABLE
+}
+
+data class ObservabilityResult(
+  val status: ObservabilityStatus, val allowedInformationLevel: InformationLevel? = null
+)
+
+fun interface ObservabilityEvaluator {
+  fun evaluate(
+    targetId: ThingId, observationContext: ObservationContext
+  ): ObservabilityResult
+}
+
+class BasicObservabilityEvaluator(
+  private val exposureRule: ExposureRule = ContainerStateExposureRule { false }
+) : ObservabilityEvaluator {
+
+  override fun evaluate(
+    targetId: ThingId, observationContext: ObservationContext
+  ): ObservabilityResult {
+    val interactionContext = observationContext.getInteractionContext()
+    val target = interactionContext.findThing(targetId) ?: return ObservabilityResult(
+      status = ObservabilityStatus.NOT_OBSERVABLE
+    )
+
+    val exposureStatus = exposureRule.evaluateExposure(target.id, interactionContext)
+    if (exposureStatus == ExposureStatus.UNEXPOSED) {
+      return ObservabilityResult(status = ObservabilityStatus.NOT_OBSERVABLE)
+    }
+
+    val maxLevel = when {
+      observationContext.range <= 1 -> InformationLevel.THOROUGH
+      observationContext.range <= 5 -> InformationLevel.DETAILED
+      else -> InformationLevel.BASIC
+    }
+
+    return ObservabilityResult(
+      status = ObservabilityStatus.OBSERVABLE, allowedInformationLevel = maxLevel
+    )
+  }
+}
