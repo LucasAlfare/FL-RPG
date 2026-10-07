@@ -2,6 +2,8 @@
 
 package com.lucasalfare.flrpg.communicationprotocol
 
+import java.util.concurrent.ConcurrentHashMap
+
 data class ProtocolVersion(val major: Int = 1, val minor: Int = 0) {
   init {
     require(major >= 0 && minor >= 0) { "The protocol's version must have non-negative components" }
@@ -45,12 +47,21 @@ value class Sequence(val value: Long) : Comparable<Sequence> {
     require(value >= 0L) { "Sequence must not be negative, but was $value." }
   }
 
-  fun next(): Sequence = Sequence(value + 1)
+  fun next(): Sequence = Sequence(if (value == Long.MAX_VALUE) 0L else value + 1)
+
+  fun distanceTo(other: Sequence): Long {
+    return if (other.value >= this.value) {
+      other.value - this.value
+    } else {
+      (Long.MAX_VALUE - this.value + 1) + other.value
+    }
+  }
 
   override fun compareTo(other: Sequence): Int = value.compareTo(other.value)
 
   companion object {
     val ZERO = Sequence(0L)
+    const val HALF_MAX_VALUE: Long = Long.MAX_VALUE / 2
   }
 }
 
@@ -69,12 +80,21 @@ value class Revision(val value: Long) : Comparable<Revision> {
   }
 }
 
+enum class DeliveryMode {
+  RELIABLE_ORDERED, RELIABLE_UNORDERED, UNRELIABLE
+}
+
+enum class MessageDirection {
+  CLIENT_TO_SERVER, SERVER_TO_CLIENT
+}
+
 data class MessageMetadata(
   val messageId: MessageId,
   val sessionId: SessionId,
   val sequence: Sequence,
   val correlationId: CorrelationId? = null,
-  val version: ProtocolVersion = ProtocolVersion.V1
+  val version: ProtocolVersion = ProtocolVersion.V1,
+  val deliveryMode: DeliveryMode = DeliveryMode.RELIABLE_ORDERED
 )
 
 sealed interface ProtocolMessage {
@@ -85,6 +105,7 @@ sealed interface ProtocolMessage {
   val sequence: Sequence get() = metadata.sequence
   val correlationId: CorrelationId? get() = metadata.correlationId
   val version: ProtocolVersion get() = metadata.version
+  val deliveryMode: DeliveryMode get() = metadata.deliveryMode
 }
 
 sealed interface ClientMessage : ProtocolMessage
@@ -388,4 +409,76 @@ fun PresentationDocument.applyPatch(patch: PresentationPatch): PresentationDocum
   return PresentationDocument(
     revision = patch.newRevision, blocks = workingBlocks
   )
+}
+
+enum class SequenceStatus {
+  EXPECTED, DUPLICATE, GAP, STALE, OUT_OF_ORDER;
+
+  val isAccepted: Boolean get() = this == EXPECTED
+  val isDuplicate: Boolean get() = this == DUPLICATE
+  val isOutOfOrder: Boolean get() = this == GAP || this == STALE || this == OUT_OF_ORDER
+}
+
+class SequenceTracker(
+  initialExpectedSequence: Sequence = Sequence.ZERO
+) {
+  var expectedSequence: Sequence = initialExpectedSequence
+    private set
+
+  private val processedMessageIds = ConcurrentHashMap.newKeySet<MessageId>()
+
+  @Synchronized
+  fun process(message: ProtocolMessage): SequenceStatus = process(message.messageId, message.sequence)
+
+  @Synchronized
+  fun process(messageId: MessageId, sequence: Sequence): SequenceStatus {
+    if (processedMessageIds.contains(messageId)) {
+      return SequenceStatus.DUPLICATE
+    }
+
+    val distance = expectedSequence.distanceTo(sequence)
+    return when {
+      distance == 0L -> {
+        processedMessageIds.add(messageId)
+        expectedSequence = sequence.next()
+        SequenceStatus.EXPECTED
+      }
+
+      distance > 0L && distance <= Sequence.HALF_MAX_VALUE -> {
+        SequenceStatus.GAP
+      }
+
+      else -> {
+        SequenceStatus.STALE
+      }
+    }
+  }
+
+  fun isProcessed(messageId: MessageId): Boolean = processedMessageIds.contains(messageId)
+
+  @Synchronized
+  fun reset(newExpectedSequence: Sequence = Sequence.ZERO) {
+    expectedSequence = newExpectedSequence
+    processedMessageIds.clear()
+  }
+}
+
+class SessionSequenceTracker(
+  val sessionId: SessionId,
+  initialClientSequence: Sequence = Sequence.ZERO,
+  initialServerSequence: Sequence = Sequence.ZERO
+) {
+  val clientToServer = SequenceTracker(initialClientSequence)
+  val serverToClient = SequenceTracker(initialServerSequence)
+
+  fun processInbound(message: ClientMessage): SequenceStatus = clientToServer.process(message)
+
+  fun processInbound(message: ServerMessage): SequenceStatus = serverToClient.process(message)
+
+  fun reset(
+    clientSequence: Sequence = Sequence.ZERO, serverSequence: Sequence = Sequence.ZERO
+  ) {
+    clientToServer.reset(clientSequence)
+    serverToClient.reset(serverSequence)
+  }
 }
