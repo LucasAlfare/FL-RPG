@@ -922,3 +922,70 @@ class ProtocolValidator {
 
   private fun invalid(message: String) = ValidationResult.Invalid(ValidationError.Protocol(message))
 }
+
+@Serializable
+enum class FailureAction {
+  REJECT, IGNORE, DISCARD, RESPOND_WITH_ERROR, REQUEST_RESYNC, TERMINATE_SESSION
+}
+
+class FailureEvaluator(
+  val limits: ProtocolLimits = ProtocolLimits()
+) {
+  fun evaluateValidationFailure(result: ValidationResult.Invalid): FailureAction {
+    val err = result.error
+    return when (err) {
+      is ValidationError.Structural -> FailureAction.RESPOND_WITH_ERROR
+      is ValidationError.Protocol -> {
+        if (err.message.contains("Duplicate") || err.message.contains("Stale")) {
+          FailureAction.DISCARD
+        } else if (err.message.contains("Sequence gap") || err.message.contains("Revision mismatch") || err.message.contains(
+            "Out-of-order"
+          )
+        ) {
+          FailureAction.REQUEST_RESYNC
+        } else {
+          FailureAction.RESPOND_WITH_ERROR
+        }
+      }
+    }
+  }
+
+  fun evaluateSequenceStatus(status: SequenceStatus): FailureAction {
+    return when (status) {
+      SequenceStatus.EXPECTED -> FailureAction.IGNORE
+      SequenceStatus.DUPLICATE, SequenceStatus.STALE -> FailureAction.DISCARD
+      SequenceStatus.GAP, SequenceStatus.OUT_OF_ORDER -> FailureAction.REQUEST_RESYNC
+    }
+  }
+
+  fun evaluateSessionResult(sessionState: SessionState): FailureAction {
+    return when (sessionState) {
+      SessionState.REJECTED -> FailureAction.REJECT
+      SessionState.NON_EXISTENT -> FailureAction.TERMINATE_SESSION
+      SessionState.ESTABLISHED, SessionState.RESUMED -> FailureAction.IGNORE
+    }
+  }
+}
+
+class RequestRateLimiter(
+  val maxRequestsPerWindow: Int = 100
+) {
+  private val requestCounts = ConcurrentHashMap<SessionId, Int>()
+
+  fun allowRequest(sessionId: SessionId): Boolean {
+    val current = requestCounts.compute(sessionId) { _, count -> (count ?: 0) + 1 } ?: 0
+    return current <= maxRequestsPerWindow
+  }
+
+  fun reset(sessionId: SessionId) {
+    requestCounts.remove(sessionId)
+  }
+
+  fun evaluateViolation(excessiveViolationsCount: Int): FailureAction {
+    return if (excessiveViolationsCount >= 3) {
+      FailureAction.TERMINATE_SESSION
+    } else {
+      FailureAction.RESPOND_WITH_ERROR
+    }
+  }
+}
