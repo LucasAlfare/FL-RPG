@@ -3,4 +3,8 @@ plugins {
 }
 rootProject.name = "FL-RPG"
 
-include(":client", ":server")
+include(
+  ":client",
+  ":server",
+  ":communication-protocol",
+)
