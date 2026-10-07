@@ -332,3 +332,32 @@ class BasicObservabilityEvaluator(
     )
   }
 }
+
+@JvmInline
+value class PresentationPriority(val value: Int = DEFAULT_PRIORITY) : Comparable<PresentationPriority> {
+  override fun compareTo(other: PresentationPriority): Int {
+    return this.value.compareTo(other.value)
+  }
+
+  companion object {
+    const val DEFAULT_PRIORITY = 0
+  }
+}
+
+interface PrioritizedThing : Thing {
+  val presentationPriority: PresentationPriority
+}
+
+class BasicPrioritizedThing(
+  override val id: ThingId,
+  private var currentState: ThingState,
+  override val capabilities: Set<Capability> = emptySet(),
+  override val presentationPriority: PresentationPriority = PresentationPriority()
+) : PrioritizedThing {
+  override val state: ThingState
+    get() = currentState
+
+  override fun updateState(newState: ThingState) {
+    currentState = newState
+  }
+}
