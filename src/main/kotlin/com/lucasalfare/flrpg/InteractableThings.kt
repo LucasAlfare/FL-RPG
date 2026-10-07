@@ -9,15 +9,28 @@ value class ThingId(val value: String) {
 
 interface ThingState
 
+@JvmInline
+value class CapabilityId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "CapabilityId cannot be blank" }
+  }
+}
+
+interface Capability {
+  val id: CapabilityId
+}
+
 interface Thing {
   val id: ThingId
   val state: ThingState
+  val capabilities: Set<Capability>
   fun updateState(newState: ThingState)
 }
 
 class BasicThing(
   override val id: ThingId,
-  private var currentState: ThingState
+  private var currentState: ThingState,
+  override val capabilities: Set<Capability> = emptySet()
 ) : Thing {
   override val state: ThingState
     get() = currentState
