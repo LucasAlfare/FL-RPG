@@ -87,15 +87,42 @@ class AnyInteractionConditions(
   }
 }
 
+fun interface InteractionEffect {
+  fun apply(interaction: Interaction, context: InteractionContext)
+}
+
+class CompositeInteractionEffect(
+  private val effects: List<InteractionEffect>
+) : InteractionEffect {
+  override fun apply(interaction: Interaction, context: InteractionContext) {
+    effects.forEach { it.apply(interaction, context) }
+  }
+}
+
+class ChangeThingStateEffect(
+  private val targetId: ThingId, private val newState: ThingState
+) : InteractionEffect {
+  override fun apply(interaction: Interaction, context: InteractionContext) {
+    context.findThing(targetId)?.updateState(newState)
+  }
+}
+
 interface Interaction {
   val id: InteractionId
   val capabilityId: CapabilityId
   val targetId: ThingId
   val participantId: ParticipantId
   val conditions: Set<InteractionCondition>
+  val effects: Set<InteractionEffect>
 
   fun isAvailable(context: InteractionContext): Boolean {
     return conditions.all { it.isSatisfied(this, context) }
+  }
+
+  fun execute(context: InteractionContext): Boolean {
+    if (!isAvailable(context)) return false
+    effects.forEach { it.apply(this, context) }
+    return true
   }
 }
 
@@ -104,5 +131,6 @@ class BasicInteraction(
   override val capabilityId: CapabilityId,
   override val targetId: ThingId,
   override val participantId: ParticipantId,
-  override val conditions: Set<InteractionCondition> = emptySet()
+  override val conditions: Set<InteractionCondition> = emptySet(),
+  override val effects: Set<InteractionEffect> = emptySet()
 ) : Interaction
