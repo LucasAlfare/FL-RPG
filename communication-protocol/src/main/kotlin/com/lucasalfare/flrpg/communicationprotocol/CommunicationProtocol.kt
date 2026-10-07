@@ -205,3 +205,46 @@ data class ClientResyncRequest(
   val lastKnownSequence: Sequence? = null,
   val lastKnownRevision: Revision? = null
 ) : ClientMessage
+
+data class ServerAccepted(
+  override val metadata: MessageMetadata, val detail: String? = null
+) : ServerMessage {
+  init {
+    require(metadata.correlationId != null) { "ServerAccepted must have a correlationId." }
+  }
+}
+
+data class ServerRejected(
+  override val metadata: MessageMetadata, val reason: String
+) : ServerMessage {
+  init {
+    require(metadata.correlationId != null) { "ServerRejected must have a correlationId." }
+    require(reason.isNotBlank()) { "Reason must not be blank." }
+  }
+}
+
+data class ServerCompleted(
+  override val metadata: MessageMetadata, val result: Map<String, String> = emptyMap()
+) : ServerMessage {
+  init {
+    require(metadata.correlationId != null) { "ServerCompleted must have a correlationId." }
+  }
+}
+
+data class ServerFailed(
+  override val metadata: MessageMetadata, val error: String
+) : ServerMessage {
+  init {
+    require(metadata.correlationId != null) { "ServerFailed must have a correlationId." }
+    require(error.isNotBlank()) { "Error must not be blank." }
+  }
+}
+
+data class ServerProtocolError(
+  override val metadata: MessageMetadata, val code: String, val description: String
+) : ServerMessage {
+  init {
+    require(code.isNotBlank()) { "Code must not be blank." }
+    require(description.isNotBlank()) { "Description must not be blank." }
+  }
+}
