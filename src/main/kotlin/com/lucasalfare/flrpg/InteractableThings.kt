@@ -65,6 +65,7 @@ value class InteractionId(val value: String) {
 interface InteractionContext {
   fun findThing(id: ThingId): Thing?
   fun findParticipant(id: ParticipantId): Participant?
+  fun getContainmentRegistry(): ContainmentRegistry? = null
 }
 
 fun interface InteractionCondition {
@@ -218,5 +219,29 @@ data class CompositeThingInitializer(
     }
     registerNode(this)
     return thing
+  }
+}
+
+enum class ExposureStatus {
+  EXPOSED, UNEXPOSED
+}
+
+fun interface ExposureRule {
+  fun evaluateExposure(contentId: ThingId, context: InteractionContext): ExposureStatus
+}
+
+class ContainerStateExposureRule(
+  private val isContainerExposing: (ThingState) -> Boolean
+) : ExposureRule {
+  override fun evaluateExposure(contentId: ThingId, context: InteractionContext): ExposureStatus {
+    val registry = context.getContainmentRegistry() ?: return ExposureStatus.EXPOSED
+    val containerId = registry.findContainerOf(contentId) ?: return ExposureStatus.EXPOSED
+    val container = context.findThing(containerId) ?: return ExposureStatus.EXPOSED
+
+    return if (isContainerExposing(container.state)) {
+      ExposureStatus.EXPOSED
+    } else {
+      ExposureStatus.UNEXPOSED
+    }
   }
 }
