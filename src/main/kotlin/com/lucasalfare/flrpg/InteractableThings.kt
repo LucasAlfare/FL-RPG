@@ -245,3 +245,31 @@ class ContainerStateExposureRule(
     }
   }
 }
+
+@JvmInline
+value class InformationId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "InformationId cannot be blank" }
+  }
+}
+
+enum class InformationLevel {
+  BASIC, DETAILED, THOROUGH
+}
+
+interface ObservableInformation {
+  val id: InformationId
+  val level: InformationLevel
+}
+
+data class BasicObservableInformation(
+  override val id: InformationId, override val level: InformationLevel
+) : ObservableInformation
+
+interface InformationHolder {
+  val informationEntries: Set<ObservableInformation>
+
+  fun getInformationForLevel(level: InformationLevel): Set<ObservableInformation> {
+    return informationEntries.filter { it.level == level }.toSet()
+  }
+}
