@@ -54,3 +54,24 @@ interface Participant {
 class BasicParticipant(
   override val id: ParticipantId
 ) : Participant
+
+@JvmInline
+value class InteractionId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "InteractionId cannot be blank" }
+  }
+}
+
+interface Interaction {
+  val id: InteractionId
+  val capabilityId: CapabilityId
+  val targetId: ThingId
+  val participantId: ParticipantId
+}
+
+class BasicInteraction(
+  override val id: InteractionId,
+  override val capabilityId: CapabilityId,
+  override val targetId: ThingId,
+  override val participantId: ParticipantId
+) : Interaction
