@@ -273,3 +273,19 @@ interface InformationHolder {
     return informationEntries.filter { it.level == level }.toSet()
   }
 }
+
+interface ObservationContext {
+  val observerParticipantId: ParticipantId
+  val observerThingId: ThingId?
+  val range: Int
+  fun getInteractionContext(): InteractionContext
+}
+
+data class BasicObservationContext(
+  override val observerParticipantId: ParticipantId,
+  override val observerThingId: ThingId? = null,
+  override val range: Int = 0,
+  private val interactionContext: InteractionContext
+) : ObservationContext {
+  override fun getInteractionContext(): InteractionContext = interactionContext
+}
