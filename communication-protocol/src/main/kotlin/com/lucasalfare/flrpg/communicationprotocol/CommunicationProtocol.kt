@@ -53,9 +53,9 @@ value class CorrelationId(val value: String) {
   init {
     require(value.isNotBlank()) { "CorrelationId must not be blank." }
   }
-
-  constructor(messageId: MessageId) : this(messageId.value)
 }
+
+fun CorrelationId(messageId: MessageId): CorrelationId = CorrelationId(messageId.value)
 
 @Serializable
 @JvmInline
