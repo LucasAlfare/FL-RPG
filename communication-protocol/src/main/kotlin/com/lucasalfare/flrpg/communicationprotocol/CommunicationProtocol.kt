@@ -55,6 +55,7 @@ value class CorrelationId(val value: String) {
   }
 }
 
+// this is a Mc-Gyverism (?) 💀
 fun CorrelationId(messageId: MessageId): CorrelationId = CorrelationId(messageId.value)
 
 @Serializable
