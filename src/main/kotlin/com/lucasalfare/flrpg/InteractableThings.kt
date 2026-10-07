@@ -205,3 +205,18 @@ class ContainmentRegistry {
     return false
   }
 }
+
+data class CompositeThingInitializer(
+  val thing: Thing, val initialContents: List<CompositeThingInitializer> = emptyList()
+) {
+  fun build(registry: ContainmentRegistry): Thing {
+    fun registerNode(node: CompositeThingInitializer) {
+      node.initialContents.forEach { childNode ->
+        registry.add(node.thing.id, childNode.thing.id)
+        registerNode(childNode)
+      }
+    }
+    registerNode(this)
+    return thing
+  }
+}
