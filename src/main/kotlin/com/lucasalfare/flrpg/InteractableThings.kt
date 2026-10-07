@@ -155,3 +155,53 @@ class BasicInteraction(
   override val conditions: Set<InteractionCondition> = emptySet(),
   override val effects: Set<InteractionEffect> = emptySet()
 ) : Interaction
+
+class ContainmentRegistry {
+  private val parentToChildren = mutableMapOf<ThingId, MutableSet<ThingId>>()
+  private val childToParent = mutableMapOf<ThingId, ThingId>()
+
+  fun add(containerId: ThingId, contentId: ThingId): Boolean {
+    if (containerId == contentId) return false
+    if (isDescendantOf(containerId, contentId)) return false
+
+    removeFromParent(contentId)
+
+    parentToChildren.getOrPut(containerId) { mutableSetOf() }.add(contentId)
+    childToParent[contentId] = containerId
+    return true
+  }
+
+  fun remove(contentId: ThingId): Boolean {
+    return removeFromParent(contentId)
+  }
+
+  fun move(contentId: ThingId, newContainerId: ThingId): Boolean {
+    return add(newContainerId, contentId)
+  }
+
+  fun findContainerOf(contentId: ThingId): ThingId? {
+    return childToParent[contentId]
+  }
+
+  fun findContentsOf(containerId: ThingId): Set<ThingId> {
+    return parentToChildren[containerId]?.toSet() ?: emptySet()
+  }
+
+  private fun removeFromParent(contentId: ThingId): Boolean {
+    val currentContainer = childToParent.remove(contentId) ?: return false
+    parentToChildren[currentContainer]?.remove(contentId)
+    if (parentToChildren[currentContainer]?.isEmpty() == true) {
+      parentToChildren.remove(currentContainer)
+    }
+    return true
+  }
+
+  private fun isDescendantOf(targetId: ThingId, potentialAncestorId: ThingId): Boolean {
+    var current = childToParent[targetId]
+    while (current != null) {
+      if (current == potentialAncestorId) return true
+      current = childToParent[current]
+    }
+    return false
+  }
+}
