@@ -107,6 +107,20 @@ class ChangeThingStateEffect(
   }
 }
 
+sealed interface InteractionResult {
+  data class Success(
+    val interactionId: InteractionId, val modifiedThingIds: Set<ThingId> = emptySet()
+  ) : InteractionResult
+
+  data class Refused(
+    val interactionId: InteractionId
+  ) : InteractionResult
+
+  data class Invalid(
+    val interactionId: InteractionId
+  ) : InteractionResult
+}
+
 interface Interaction {
   val id: InteractionId
   val capabilityId: CapabilityId
@@ -119,10 +133,17 @@ interface Interaction {
     return conditions.all { it.isSatisfied(this, context) }
   }
 
-  fun execute(context: InteractionContext): Boolean {
-    if (!isAvailable(context)) return false
+  fun execute(context: InteractionContext): InteractionResult {
+    if (context.findThing(targetId) == null || context.findParticipant(participantId) == null) {
+      return InteractionResult.Invalid(id)
+    }
+    if (!isAvailable(context)) {
+      return InteractionResult.Refused(id)
+    }
     effects.forEach { it.apply(this, context) }
-    return true
+    return InteractionResult.Success(
+      interactionId = id, modifiedThingIds = setOf(targetId)
+    )
   }
 }
 
