@@ -3,7 +3,22 @@
 package com.lucasalfare.flrpg.communicationprotocol
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
+val ProtocolJson = Json {
+  ignoreUnknownKeys = true
+  encodeDefaults = true
+  prettyPrint = false
+}
+
+fun ProtocolMessage.toJson(): String = ProtocolJson.encodeToString(this)
+inline fun <reified T : ProtocolMessage> String.toProtocolMessage(): T = ProtocolJson.decodeFromString(this)
+
+@Serializable
 data class ProtocolVersion(val major: Int = 1, val minor: Int = 0) {
   init {
     require(major >= 0 && minor >= 0) { "The protocol's version must have non-negative components" }
@@ -18,6 +33,7 @@ data class ProtocolVersion(val major: Int = 1, val minor: Int = 0) {
   }
 }
 
+@Serializable
 @JvmInline
 value class MessageId(val value: String) {
   init {
@@ -25,6 +41,7 @@ value class MessageId(val value: String) {
   }
 }
 
+@Serializable
 @JvmInline
 value class SessionId(val value: String) {
   init {
@@ -32,6 +49,7 @@ value class SessionId(val value: String) {
   }
 }
 
+@Serializable
 @JvmInline
 value class CorrelationId(val value: String) {
   init {
@@ -41,6 +59,7 @@ value class CorrelationId(val value: String) {
   constructor(messageId: MessageId) : this(messageId.value)
 }
 
+@Serializable
 @JvmInline
 value class Sequence(val value: Long) : Comparable<Sequence> {
   init {
@@ -65,6 +84,7 @@ value class Sequence(val value: Long) : Comparable<Sequence> {
   }
 }
 
+@Serializable
 @JvmInline
 value class Revision(val value: Long) : Comparable<Revision> {
   init {
@@ -80,14 +100,17 @@ value class Revision(val value: Long) : Comparable<Revision> {
   }
 }
 
+@Serializable
 enum class DeliveryMode {
   RELIABLE_ORDERED, RELIABLE_UNORDERED, UNRELIABLE
 }
 
+@Serializable
 enum class MessageDirection {
   CLIENT_TO_SERVER, SERVER_TO_CLIENT
 }
 
+@Serializable
 data class MessageMetadata(
   val messageId: MessageId,
   val sessionId: SessionId,
@@ -97,6 +120,7 @@ data class MessageMetadata(
   val deliveryMode: DeliveryMode = DeliveryMode.RELIABLE_ORDERED
 )
 
+@Serializable
 sealed interface ProtocolMessage {
   val metadata: MessageMetadata
 
@@ -108,26 +132,36 @@ sealed interface ProtocolMessage {
   val deliveryMode: DeliveryMode get() = metadata.deliveryMode
 }
 
+@Serializable
 sealed interface ClientMessage : ProtocolMessage
 
+@Serializable
 sealed interface ServerMessage : ProtocolMessage
 
+@Serializable
 enum class SessionState {
   NON_EXISTENT, ESTABLISHED, REJECTED, RESUMED
 }
 
+@Serializable
 enum class RejectionReason {
   INCOMPATIBLE_VERSION, SESSION_NOT_FOUND, SERVER_FULL, GENERIC_ERROR
 }
 
+@Serializable
+@SerialName("ClientHello")
 data class ClientHello(
   override val metadata: MessageMetadata, val resumeSessionId: SessionId? = null
 ) : ClientMessage
 
+@Serializable
+@SerialName("ServerWelcome")
 data class ServerWelcome(
   override val metadata: MessageMetadata, val isResumed: Boolean = false
 ) : ServerMessage
 
+@Serializable
+@SerialName("ServerReject")
 data class ServerReject(
   override val metadata: MessageMetadata, val reason: RejectionReason
 ) : ServerMessage
@@ -193,6 +227,8 @@ class SessionLifecycleHandler(
   fun isSessionActive(sessionId: SessionId): Boolean = activeSessions.contains(sessionId)
 }
 
+@Serializable
+@SerialName("ClientAction")
 data class ClientAction(
   override val metadata: MessageMetadata, val actionId: String, val parameters: Map<String, String> = emptyMap()
 ) : ClientMessage {
@@ -201,6 +237,8 @@ data class ClientAction(
   }
 }
 
+@Serializable
+@SerialName("ClientSelection")
 data class ClientSelection(
   override val metadata: MessageMetadata, val choiceId: String
 ) : ClientMessage {
@@ -209,6 +247,8 @@ data class ClientSelection(
   }
 }
 
+@Serializable
+@SerialName("ClientTextCommand")
 data class ClientTextCommand(
   override val metadata: MessageMetadata, val rawText: String
 ) : ClientMessage {
@@ -217,16 +257,22 @@ data class ClientTextCommand(
   }
 }
 
+@Serializable
+@SerialName("ClientCancel")
 data class ClientCancel(
   override val metadata: MessageMetadata, val targetMessageId: MessageId
 ) : ClientMessage
 
+@Serializable
+@SerialName("ClientResyncRequest")
 data class ClientResyncRequest(
   override val metadata: MessageMetadata,
   val lastKnownSequence: Sequence? = null,
   val lastKnownRevision: Revision? = null
 ) : ClientMessage
 
+@Serializable
+@SerialName("ServerAccepted")
 data class ServerAccepted(
   override val metadata: MessageMetadata, val detail: String? = null
 ) : ServerMessage {
@@ -235,6 +281,8 @@ data class ServerAccepted(
   }
 }
 
+@Serializable
+@SerialName("ServerRejected")
 data class ServerRejected(
   override val metadata: MessageMetadata, val reason: String
 ) : ServerMessage {
@@ -244,6 +292,8 @@ data class ServerRejected(
   }
 }
 
+@Serializable
+@SerialName("ServerCompleted")
 data class ServerCompleted(
   override val metadata: MessageMetadata, val result: Map<String, String> = emptyMap()
 ) : ServerMessage {
@@ -252,6 +302,8 @@ data class ServerCompleted(
   }
 }
 
+@Serializable
+@SerialName("ServerFailed")
 data class ServerFailed(
   override val metadata: MessageMetadata, val error: String
 ) : ServerMessage {
@@ -261,6 +313,8 @@ data class ServerFailed(
   }
 }
 
+@Serializable
+@SerialName("ServerProtocolError")
 data class ServerProtocolError(
   override val metadata: MessageMetadata, val code: String, val description: String
 ) : ServerMessage {
@@ -270,6 +324,8 @@ data class ServerProtocolError(
   }
 }
 
+@Serializable
+@SerialName("ServerEvent")
 data class ServerEvent(
   override val metadata: MessageMetadata, val type: String, val payload: Map<String, String> = emptyMap()
 ) : ServerMessage {
@@ -278,6 +334,7 @@ data class ServerEvent(
   }
 }
 
+@Serializable
 @JvmInline
 value class BlockId(val value: String) {
   init {
@@ -285,10 +342,12 @@ value class BlockId(val value: String) {
   }
 }
 
+@Serializable
 enum class TextStyle {
   NORMAL, HEADER, SUBHEADER, HIGHLIGHT, MUTED, WARNING, ERROR
 }
 
+@Serializable
 data class Choice(
   val id: String, val text: String, val enabled: Boolean = true
 ) {
@@ -297,10 +356,12 @@ data class Choice(
   }
 }
 
+@Serializable
 enum class FeedOrdering {
   CHRONOLOGICAL, REVERSE_CHRONOLOGICAL
 }
 
+@Serializable
 data class FeedItem(
   val id: String, val text: String, val style: TextStyle = TextStyle.NORMAL
 ) {
@@ -309,19 +370,28 @@ data class FeedItem(
   }
 }
 
+@Serializable
 sealed interface BlockContent {
+  @Serializable
+  @SerialName("Text")
   data class Text(
     val text: String, val style: TextStyle = TextStyle.NORMAL
   ) : BlockContent
 
+  @Serializable
+  @SerialName("ItemsList")
   data class ItemsList(
     val items: List<String>, val isOrdered: Boolean = false
   ) : BlockContent
 
+  @Serializable
+  @SerialName("Choices")
   data class Choices(
     val choices: List<Choice>
   ) : BlockContent
 
+  @Serializable
+  @SerialName("Feed")
   data class Feed(
     val feedId: String, val items: List<FeedItem>, val ordering: FeedOrdering = FeedOrdering.CHRONOLOGICAL
   ) : BlockContent {
@@ -331,10 +401,12 @@ sealed interface BlockContent {
   }
 }
 
+@Serializable
 data class PresentationBlock(
   val id: BlockId, val content: BlockContent
 )
 
+@Serializable
 data class PresentationDocument(
   val revision: Revision = Revision.ZERO, val blocks: List<PresentationBlock> = emptyList()
 ) {
@@ -344,17 +416,33 @@ data class PresentationDocument(
   }
 }
 
+@Serializable
+@SerialName("PresentationSnapshot")
 data class PresentationSnapshot(
   override val metadata: MessageMetadata, val document: PresentationDocument
 ) : ServerMessage
 
+@Serializable
 sealed interface PatchOperation {
+  @Serializable
+  @SerialName("Upsert")
   data class Upsert(val block: PresentationBlock) : PatchOperation
+
+  @Serializable
+  @SerialName("Remove")
   data class Remove(val blockId: BlockId) : PatchOperation
+
+  @Serializable
+  @SerialName("Append")
   data class Append(val block: PresentationBlock) : PatchOperation
+
+  @Serializable
+  @SerialName("Clear")
   data object Clear : PatchOperation
 }
 
+@Serializable
+@SerialName("PresentationPatch")
 data class PresentationPatch(
   override val metadata: MessageMetadata,
   val baseRevision: Revision,
@@ -411,6 +499,7 @@ fun PresentationDocument.applyPatch(patch: PresentationPatch): PresentationDocum
   )
 }
 
+@Serializable
 enum class SequenceStatus {
   EXPECTED, DUPLICATE, GAP, STALE, OUT_OF_ORDER;
 
