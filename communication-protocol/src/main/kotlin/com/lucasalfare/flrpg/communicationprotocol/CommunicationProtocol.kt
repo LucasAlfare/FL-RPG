@@ -65,7 +65,7 @@ value class Revision(val value: Long) : Comparable<Revision> {
   override fun compareTo(other: Revision): Int = value.compareTo(other.value)
 
   companion object {
-    val ZERO = Sequence(0L)
+    val ZERO = Revision(0L)
   }
 }
 
@@ -254,5 +254,71 @@ data class ServerEvent(
 ) : ServerMessage {
   init {
     require(type.isNotBlank()) { "Event type must not be blank." }
+  }
+}
+
+@JvmInline
+value class BlockId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "BlockId must not be blank." }
+  }
+}
+
+enum class TextStyle {
+  NORMAL, HEADER, SUBHEADER, HIGHLIGHT, MUTED, WARNING, ERROR
+}
+
+data class Choice(
+  val id: String, val text: String, val enabled: Boolean = true
+) {
+  init {
+    require(id.isNotBlank()) { "Choice ID must not be blank." }
+  }
+}
+
+enum class FeedOrdering {
+  CHRONOLOGICAL, REVERSE_CHRONOLOGICAL
+}
+
+data class FeedItem(
+  val id: String, val text: String, val style: TextStyle = TextStyle.NORMAL
+) {
+  init {
+    require(id.isNotBlank()) { "Feed item ID must not be blank." }
+  }
+}
+
+sealed interface BlockContent {
+  data class Text(
+    val text: String, val style: TextStyle = TextStyle.NORMAL
+  ) : BlockContent
+
+  data class ItemsList(
+    val items: List<String>, val isOrdered: Boolean = false
+  ) : BlockContent
+
+  data class Choices(
+    val choices: List<Choice>
+  ) : BlockContent
+
+  data class Feed(
+    val feedId: String, val items: List<FeedItem>, val ordering: FeedOrdering = FeedOrdering.CHRONOLOGICAL
+  ) : BlockContent {
+    init {
+      require(feedId.isNotBlank()) { "Feed ID must not be blank." }
+    }
+  }
+}
+
+data class PresentationBlock(
+  val id: BlockId, val content: BlockContent
+)
+
+data class PresentationDocument(
+  val revision: Revision = Revision.ZERO, val blocks: List<PresentationBlock> = emptyList()
+) {
+  init {
+    val ids = blocks.map { it.id }
+    require(ids.distinct().size == ids.size) { "PresentationDocument cannot contain duplicate block IDs." }
   }
 }
