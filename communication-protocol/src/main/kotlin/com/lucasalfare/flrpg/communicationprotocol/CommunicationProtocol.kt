@@ -65,7 +65,7 @@ value class Revision(val value: Long) : Comparable<Revision> {
   override fun compareTo(other: Revision): Int = value.compareTo(other.value)
 
   companion object {
-    val ZERO = Revision(0L)
+    val ZERO = Sequence(0L)
   }
 }
 
@@ -246,5 +246,13 @@ data class ServerProtocolError(
   init {
     require(code.isNotBlank()) { "Code must not be blank." }
     require(description.isNotBlank()) { "Description must not be blank." }
+  }
+}
+
+data class ServerEvent(
+  override val metadata: MessageMetadata, val type: String, val payload: Map<String, String> = emptyMap()
+) : ServerMessage {
+  init {
+    require(type.isNotBlank()) { "Event type must not be blank." }
   }
 }
