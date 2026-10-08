@@ -1,9 +1,9 @@
-@file:Suppress("unused", "UnusedVariable")
-
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
 import com.lucasalfare.flrpg.gamedomain.CharacterId
+import com.lucasalfare.flrpg.gamedomain.GameAction
+import com.lucasalfare.flrpg.gamedomain.GameActionProcessor
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -72,7 +72,8 @@ suspend fun handleConnection(
   registry: ConnectionRegistry,
   sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
   structuralValidator: StructuralValidator = StructuralValidator(),
-  protocolValidator: ProtocolValidator = ProtocolValidator()
+  protocolValidator: ProtocolValidator = ProtocolValidator(),
+  actionProcessor: GameActionProcessor? = null
 ) {
   registry.register(connection)
   var sequenceTracker: SessionSequenceTracker? = null
@@ -114,6 +115,16 @@ suspend fun handleConnection(
         val status = sequenceTracker?.processInbound(message)
         if (status != null && !status.isAccepted) {
           continue
+        }
+
+        if (message is ClientAction) {
+          val characterId = registry.findCharacterIdBySessionId(currentSessionId)
+          if (characterId != null) {
+            val gameAction = GameAction(
+              name = message.actionId, actorId = characterId, arguments = message.parameters
+            )
+            actionProcessor?.process(gameAction)
+          }
         }
       }
     }
@@ -170,7 +181,8 @@ fun main() {
 
 fun Application.module(
   connectionRegistry: ConnectionRegistry = ConnectionRegistry(),
-  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler()
+  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
+  actionProcessor: GameActionProcessor? = null
 ) {
   install(WebSockets)
 
@@ -181,7 +193,12 @@ fun Application.module(
 
     webSocket("/game") {
       val connection = KtorConnection(session = this)
-      handleConnection(connection, connectionRegistry, sessionLifecycleHandler)
+      handleConnection(
+        connection = connection,
+        registry = connectionRegistry,
+        sessionLifecycleHandler = sessionLifecycleHandler,
+        actionProcessor = actionProcessor
+      )
     }
   }
 }
