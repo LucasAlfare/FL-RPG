@@ -1,3 +1,5 @@
+@file:Suppress("unused", "UnusedVariable")
+
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.ClientMessage
@@ -17,22 +19,46 @@ import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 // domain
 interface Connection {
+  val id: String
   suspend fun send(message: ServerMessage)
   suspend fun receive(): ClientMessage?
 }
 
-suspend fun handleConnection(connection: Connection) {
-  while (true) {
-    val message = connection.receive() ?: break
+class ConnectionRegistry {
+  private val connections = ConcurrentHashMap<String, Connection>()
+
+  fun register(connection: Connection) {
+    connections[connection.id] = connection
+  }
+
+  fun unregister(id: String) {
+    connections.remove(id)
+  }
+
+  fun findById(id: String): Connection? = connections[id]
+
+  fun activeConnections(): List<Connection> = connections.values.toList()
+}
+
+suspend fun handleConnection(connection: Connection, registry: ConnectionRegistry) {
+  registry.register(connection)
+  try {
+    while (true) {
+      val message = connection.receive() ?: break
+    }
+  } finally {
+    registry.unregister(connection.id)
   }
 }
 
 // infrastructure
 class KtorConnection(
-  private val session: DefaultWebSocketServerSession
+  override val id: String = UUID.randomUUID().toString(), private val session: DefaultWebSocketServerSession
 ) : Connection {
   override suspend fun send(message: ServerMessage) {
     session.send(message.toJson())
@@ -58,6 +84,8 @@ class KtorConnection(
 
 // entry point
 fun main() {
+  val connectionRegistry = ConnectionRegistry()
+
   embeddedServer(Netty, port = 8080) {
     install(WebSockets)
 
@@ -67,8 +95,8 @@ fun main() {
       }
 
       webSocket("/game") {
-        val connection = KtorConnection(this)
-        handleConnection(connection)
+        val connection = KtorConnection(session = this)
+        handleConnection(connection, connectionRegistry)
       }
     }
   }.start(wait = true)
