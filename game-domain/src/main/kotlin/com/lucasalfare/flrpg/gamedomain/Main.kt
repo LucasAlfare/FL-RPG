@@ -54,3 +54,21 @@ sealed interface GameActionResult {
     val reason: String, override val facts: List<GameFact> = emptyList()
   ) : GameActionResult
 }
+
+class GameActionProcessor(val nucleus: Nucleus) {
+  fun process(action: GameAction): GameActionResult {
+    return when (action.name) {
+      "enter_world" -> processEnterWorld(action)
+      "move" -> processMove(action)
+      else -> GameActionResult.Rejected("Unknown action: ${action.name}")
+    }
+  }
+
+  private fun processEnterWorld(action: GameAction): GameActionResult {
+    return GameActionResult.Rejected("Action 'enter_world' not yet implemented")
+  }
+
+  private fun processMove(action: GameAction): GameActionResult {
+    return GameActionResult.Rejected("Action 'move' not yet implemented")
+  }
+}
