@@ -1,9 +1,12 @@
+@file:Suppress("unused")
+
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
 import com.lucasalfare.flrpg.gamedomain.CharacterId
 import com.lucasalfare.flrpg.gamedomain.GameAction
 import com.lucasalfare.flrpg.gamedomain.GameActionProcessor
+import com.lucasalfare.flrpg.gamedomain.GameActionResult
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -123,7 +126,37 @@ suspend fun handleConnection(
             val gameAction = GameAction(
               name = message.actionId, actorId = characterId, arguments = message.parameters
             )
-            actionProcessor?.process(gameAction)
+            val result = actionProcessor?.process(gameAction)
+            if (result != null) {
+              val correlationId = CorrelationId(message.metadata.messageId)
+              val responseMessage = when (result) {
+                is GameActionResult.Success -> {
+                  val resultMap = result.facts.flatMap { fact -> fact.arguments.entries }
+                    .associate { it.key to (it.value?.toString() ?: "") }
+
+                  ServerCompleted(
+                    metadata = MessageMetadata(
+                      messageId = MessageId(UUID.randomUUID().toString()),
+                      sessionId = currentSessionId,
+                      sequence = Sequence.ZERO,
+                      correlationId = correlationId
+                    ), result = resultMap
+                  )
+                }
+
+                is GameActionResult.Rejected -> {
+                  ServerRejected(
+                    metadata = MessageMetadata(
+                      messageId = MessageId(UUID.randomUUID().toString()),
+                      sessionId = currentSessionId,
+                      sequence = Sequence.ZERO,
+                      correlationId = correlationId
+                    ), reason = result.reason
+                  )
+                }
+              }
+              connection.send(responseMessage)
+            }
           }
         }
       }
