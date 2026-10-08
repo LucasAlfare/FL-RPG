@@ -1,5 +1,3 @@
-@file:Suppress("unused")
-
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
@@ -7,6 +5,7 @@ import com.lucasalfare.flrpg.gamedomain.CharacterId
 import com.lucasalfare.flrpg.gamedomain.GameAction
 import com.lucasalfare.flrpg.gamedomain.GameActionProcessor
 import com.lucasalfare.flrpg.gamedomain.GameActionResult
+import com.lucasalfare.flrpg.gamedomain.GameFact
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -68,6 +67,39 @@ class ConnectionRegistry {
   }
 
   fun activeConnections(): List<Connection> = connections.values.toList()
+}
+
+suspend fun distributeFacts(
+  facts: List<GameFact>,
+  registry: ConnectionRegistry,
+  actionProcessor: GameActionProcessor,
+  excludeCharacterId: CharacterId? = null
+) {
+  for (fact in facts) {
+    val interestedCharacters = actionProcessor.findInterestedCharacters(fact)
+    for (interestedId in interestedCharacters) {
+      if (interestedId != excludeCharacterId) {
+        val targetConnection = registry.findByCharacterId(interestedId)
+        val targetSessionId = targetConnection?.sessionId
+        if (targetConnection != null && targetSessionId != null) {
+          val eventMessage = ServerEvent(
+            metadata = MessageMetadata(
+              messageId = MessageId(UUID.randomUUID().toString()), sessionId = targetSessionId, sequence = Sequence.ZERO
+            ), type = fact.name, payload = fact.arguments.mapValues { it.value?.toString() ?: "" })
+          targetConnection.send(eventMessage)
+        }
+      }
+    }
+  }
+}
+
+// TODO: consider if this really needs to exist, specially here in server module
+suspend fun advanceTimeAndDistribute(
+  ticks: Long, registry: ConnectionRegistry, actionProcessor: GameActionProcessor
+): List<GameFact> {
+  val facts = actionProcessor.advanceTime(ticks)
+  distributeFacts(facts, registry, actionProcessor)
+  return facts
 }
 
 suspend fun handleConnection(
@@ -158,24 +190,7 @@ suspend fun handleConnection(
               connection.send(responseMessage)
 
               if (result is GameActionResult.Success) {
-                for (fact in result.facts) {
-                  val interestedCharacters = actionProcessor.findInterestedCharacters(fact)
-                  for (interestedId in interestedCharacters) {
-                    if (interestedId != characterId) {
-                      val targetConnection = registry.findByCharacterId(interestedId)
-                      val targetSessionId = targetConnection?.sessionId
-                      if (targetConnection != null && targetSessionId != null) {
-                        val eventMessage = ServerEvent(
-                          metadata = MessageMetadata(
-                            messageId = MessageId(UUID.randomUUID().toString()),
-                            sessionId = targetSessionId,
-                            sequence = Sequence.ZERO
-                          ), type = fact.name, payload = fact.arguments.mapValues { it.value?.toString() ?: "" })
-                        targetConnection.send(eventMessage)
-                      }
-                    }
-                  }
-                }
+                distributeFacts(result.facts, registry, actionProcessor, excludeCharacterId = characterId)
               }
             }
           }

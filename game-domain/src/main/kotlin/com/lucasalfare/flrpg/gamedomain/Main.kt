@@ -77,6 +77,42 @@ class GameActionProcessor(val nucleus: Nucleus) {
     }
   }
 
+  fun advanceTime(ticks: Long): List<GameFact> {
+    val activeBefore = nucleus.world.getActiveMovements()
+    nucleus.world.advance(WorldDuration(ticks))
+    val facts = mutableListOf<GameFact>()
+
+    for (movement in activeBefore) {
+      val currentMovement = nucleus.world.getMovement(movement.entityId)
+      if (currentMovement == null || !currentMovement.isInProgress) {
+        val currentLocation = nucleus.world.state.getLocation(movement.entityId)
+        if (currentLocation == movement.destination) {
+          facts.add(
+            GameFact(
+              name = "character_movement_completed", arguments = mapOf(
+                "characterId" to movement.entityId.value,
+                "originLocationId" to movement.origin.value,
+                "locationId" to movement.destination.value
+              )
+            )
+          )
+        } else {
+          facts.add(
+            GameFact(
+              name = "character_movement_interrupted", arguments = mapOf(
+                "characterId" to movement.entityId.value,
+                "originLocationId" to movement.origin.value,
+                "locationId" to (currentLocation?.value ?: movement.origin.value)
+              )
+            )
+          )
+        }
+      }
+    }
+
+    return facts
+  }
+
   fun findInterestedCharacters(fact: GameFact): List<CharacterId> {
     val locationIdStr = fact.arguments["locationId"] as? String ?: return emptyList()
     val locationId = WorldLocationId(locationIdStr)
