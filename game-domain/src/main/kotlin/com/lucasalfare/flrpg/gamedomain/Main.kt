@@ -1,10 +1,15 @@
+@file:Suppress("unused")
+
 package com.lucasalfare.flrpg.gamedomain
 
+import com.lucasalfare.flworld.UnweightedPathFinder
 import com.lucasalfare.flworld.World
+import com.lucasalfare.flworld.WorldDuration
 import com.lucasalfare.flworld.WorldEntity
 import com.lucasalfare.flworld.WorldEntityId
 import com.lucasalfare.flworld.WorldLocation
 import com.lucasalfare.flworld.WorldLocationId
+import com.lucasalfare.flworld.WorldMovement
 
 @JvmInline
 value class CharacterId(val value: String)
@@ -105,6 +110,56 @@ class GameActionProcessor(val nucleus: Nucleus) {
   }
 
   private fun processMove(action: GameAction): GameActionResult {
-    return GameActionResult.Rejected("Action 'move' not yet implemented")
+    if (!nucleus.containsCharacter(action.actorId)) {
+      return GameActionResult.Rejected("Character '${action.actorId.value}' is not in the world")
+    }
+
+    val targetLocationIdStr = (action.arguments["targetLocationId"] ?: action.arguments["destination"]
+    ?: action.arguments["locationId"]) as? String
+      ?: return GameActionResult.Rejected("Missing target location argument")
+
+    val entityId = WorldEntityId(action.actorId.value)
+    val currentLocationId = nucleus.world.state.getLocation(entityId)
+      ?: return GameActionResult.Rejected("Character '${action.actorId.value}' has no location in the world")
+
+    val destinationId = WorldLocationId(targetLocationIdStr)
+    if (nucleus.world.graph.getLocation(destinationId) == null) {
+      return GameActionResult.Rejected("Destination location '${destinationId.value}' does not exist")
+    }
+
+    if (currentLocationId == destinationId) {
+      return GameActionResult.Rejected("Character is already at location '${destinationId.value}'")
+    }
+
+    val path = UnweightedPathFinder().findPath(
+      graph = nucleus.world.graph, from = currentLocationId, to = destinationId
+    ) ?: return GameActionResult.Rejected("No valid path to location '${destinationId.value}'")
+
+    val duration = WorldDuration(path.connections.size.coerceAtLeast(1).toLong())
+    val startInstant = nucleus.world.clock.currentInstant
+    val movement = WorldMovement(
+      entityId = entityId,
+      origin = currentLocationId,
+      destination = destinationId,
+      path = path,
+      startInstant = startInstant,
+      duration = duration
+    )
+
+    return runCatching {
+      nucleus.world.startMovement(movement)
+    }.fold(onSuccess = {
+      val fact = GameFact(
+        name = "character_moved", arguments = mapOf(
+          "characterId" to action.actorId.value,
+          "fromLocationId" to currentLocationId.value,
+          "toLocationId" to destinationId.value,
+          "locationId" to currentLocationId.value
+        )
+      )
+      GameActionResult.Success(facts = listOf(fact))
+    }, onFailure = { ex ->
+      GameActionResult.Rejected("Failed to start movement: ${ex.message}")
+    })
   }
 }
