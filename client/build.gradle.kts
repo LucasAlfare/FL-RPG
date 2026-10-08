@@ -10,6 +10,8 @@ repositories {
 }
 
 dependencies {
+  implementation(project(":communication-protocol"))
+
   testImplementation(kotlin("test"))
 }
 

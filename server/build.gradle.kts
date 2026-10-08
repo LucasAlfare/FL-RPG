@@ -11,6 +11,8 @@ repositories {
 }
 
 dependencies {
+  implementation(project(":communication-protocol"))
+
   implementation("com.github.LucasAlfare:FL-Turns:1.0.0")
   implementation("com.github.LucasAlfare:FL-Combat:1.0.0")
   implementation("com.github.LucasAlfare:FL-World:1.0.0")
