@@ -2,9 +2,14 @@
 
 package com.lucasalfare.flrpg.server
 
+import com.lucasalfare.flrpg.communicationprotocol.ClientHello
 import com.lucasalfare.flrpg.communicationprotocol.ClientMessage
+import com.lucasalfare.flrpg.communicationprotocol.MessageId
 import com.lucasalfare.flrpg.communicationprotocol.ProtocolMessage
 import com.lucasalfare.flrpg.communicationprotocol.ServerMessage
+import com.lucasalfare.flrpg.communicationprotocol.ServerWelcome
+import com.lucasalfare.flrpg.communicationprotocol.SessionId
+import com.lucasalfare.flrpg.communicationprotocol.SessionLifecycleHandler
 import com.lucasalfare.flrpg.communicationprotocol.toJson
 import com.lucasalfare.flrpg.communicationprotocol.toProtocolMessage
 import io.ktor.server.application.install
@@ -25,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
 // domain
 interface Connection {
   val id: String
+  var sessionId: SessionId?
   suspend fun send(message: ServerMessage)
   suspend fun receive(): ClientMessage?
 }
@@ -45,11 +51,23 @@ class ConnectionRegistry {
   fun activeConnections(): List<Connection> = connections.values.toList()
 }
 
-suspend fun handleConnection(connection: Connection, registry: ConnectionRegistry) {
+suspend fun handleConnection(
+  connection: Connection,
+  registry: ConnectionRegistry,
+  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler()
+) {
   registry.register(connection)
   try {
     while (true) {
       val message = connection.receive() ?: break
+      if (message is ClientHello) {
+        val replyMessageId = MessageId(UUID.randomUUID().toString())
+        val (_, response) = sessionLifecycleHandler.processHello(message, replyMessageId)
+        if (response is ServerWelcome) {
+          connection.sessionId = response.metadata.sessionId
+        }
+        connection.send(response)
+      }
     }
   } finally {
     registry.unregister(connection.id)
@@ -58,7 +76,9 @@ suspend fun handleConnection(connection: Connection, registry: ConnectionRegistr
 
 // infrastructure
 class KtorConnection(
-  override val id: String = UUID.randomUUID().toString(), private val session: DefaultWebSocketServerSession
+  override val id: String = UUID.randomUUID().toString(),
+  override var sessionId: SessionId? = null,
+  private val session: DefaultWebSocketServerSession
 ) : Connection {
   override suspend fun send(message: ServerMessage) {
     session.send(message.toJson())
@@ -85,6 +105,7 @@ class KtorConnection(
 // entry point
 fun main() {
   val connectionRegistry = ConnectionRegistry()
+  val sessionLifecycleHandler = SessionLifecycleHandler()
 
   embeddedServer(Netty, port = 8080) {
     install(WebSockets)
@@ -96,7 +117,7 @@ fun main() {
 
       webSocket("/game") {
         val connection = KtorConnection(session = this)
-        handleConnection(connection, connectionRegistry)
+        handleConnection(connection, connectionRegistry, sessionLifecycleHandler)
       }
     }
   }.start(wait = true)
