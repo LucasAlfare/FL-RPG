@@ -3,6 +3,7 @@
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
+import com.lucasalfare.flrpg.gamedomain.CharacterId
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -22,10 +23,10 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-// domain
 interface Connection {
   val id: String
   var sessionId: SessionId?
+  var characterId: CharacterId?
   suspend fun send(message: ServerMessage)
   suspend fun receive(): ClientMessage?
   suspend fun close()
@@ -45,6 +46,23 @@ class ConnectionRegistry {
   fun findById(id: String): Connection? = connections[id]
 
   fun findBySessionId(sessionId: SessionId): Connection? = connections.values.firstOrNull { it.sessionId == sessionId }
+
+  fun findByCharacterId(characterId: CharacterId): Connection? =
+    connections.values.firstOrNull { it.characterId == characterId }
+
+  fun bindCharacter(sessionId: SessionId, characterId: CharacterId): Boolean {
+    val connection = findBySessionId(sessionId) ?: return false
+    connection.characterId = characterId
+    return true
+  }
+
+  fun unbindCharacter(sessionId: SessionId) {
+    findBySessionId(sessionId)?.characterId = null
+  }
+
+  fun findCharacterIdBySessionId(sessionId: SessionId): CharacterId? {
+    return findBySessionId(sessionId)?.characterId
+  }
 
   fun activeConnections(): List<Connection> = connections.values.toList()
 }
@@ -106,10 +124,10 @@ suspend fun handleConnection(
   }
 }
 
-// infrastructure
 class KtorConnection(
   override val id: String = UUID.randomUUID().toString(),
   override var sessionId: SessionId? = null,
+  override var characterId: CharacterId? = null,
   private val session: DefaultWebSocketServerSession
 ) : Connection {
   private val sendMutex = Mutex()
@@ -146,7 +164,6 @@ class KtorConnection(
   }
 }
 
-// entry point
 fun main() {
   embeddedServer(Netty, port = 8080, module = Application::module).start(wait = true)
 }
