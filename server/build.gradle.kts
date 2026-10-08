@@ -7,6 +7,7 @@ version = "1.0-SNAPSHOT"
 
 repositories {
   mavenCentral()
+  maven { url = uri("https://jitpack.io") }
 }
 
 val ktorVersion = "3.6.0"

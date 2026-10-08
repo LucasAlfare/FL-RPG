@@ -4,9 +4,12 @@ package com.lucasalfare.flrpg.gamedomain
 
 import com.lucasalfare.flworld.UnweightedPathFinder
 import com.lucasalfare.flworld.World
+import com.lucasalfare.flworld.WorldConnection
+import com.lucasalfare.flworld.WorldConnectionId
 import com.lucasalfare.flworld.WorldDuration
 import com.lucasalfare.flworld.WorldEntity
 import com.lucasalfare.flworld.WorldEntityId
+import com.lucasalfare.flworld.WorldId
 import com.lucasalfare.flworld.WorldLocation
 import com.lucasalfare.flworld.WorldLocationId
 import com.lucasalfare.flworld.WorldMovement
@@ -22,7 +25,7 @@ data class Character(
 )
 
 class Nucleus(
-  val id: NucleusId, val world: World
+  val id: NucleusId, val world: World = World(WorldId(id.value))
 ) {
   private val _characters = mutableSetOf<CharacterId>()
 
@@ -45,6 +48,22 @@ class Nucleus(
     return _characters.filter { characterId ->
       world.state.getLocation(WorldEntityId(characterId.value)) == locationId
     }
+  }
+
+  fun registerLocation(locationId: String) {
+    val id = WorldLocationId(locationId)
+    if (world.graph.getLocation(id) == null) {
+      world.graph.registerLocation(WorldLocation(id))
+    }
+  }
+
+  fun connectLocations(fromId: String, toId: String, connectionId: String = "conn_${fromId}_$toId") {
+    registerLocation(fromId)
+    registerLocation(toId)
+    val conn = WorldConnection(
+      id = WorldConnectionId(connectionId), from = WorldLocationId(fromId), to = WorldLocationId(toId)
+    )
+    world.graph.registerConnection(conn)
   }
 }
 
@@ -127,9 +146,7 @@ class GameActionProcessor(val nucleus: Nucleus) {
     val locationIdStr = action.arguments["locationId"] as? String ?: "spawn"
     val locationId = WorldLocationId(locationIdStr)
 
-    if (nucleus.world.graph.getLocation(locationId) == null) {
-      nucleus.world.graph.registerLocation(WorldLocation(locationId))
-    }
+    nucleus.registerLocation(locationId.value)
 
     val entityId = WorldEntityId(action.actorId.value)
     nucleus.world.registerEntity(WorldEntity(entityId))
