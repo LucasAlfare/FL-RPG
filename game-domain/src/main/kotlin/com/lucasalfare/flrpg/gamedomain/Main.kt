@@ -4,19 +4,11 @@ package com.lucasalfare.flrpg.gamedomain
 
 import com.lucasalfare.flworld.World
 
-// ============================================================================
-// Identificadores de Domínio
-// ============================================================================
-
 @JvmInline
 value class CharacterId(val value: String)
 
 @JvmInline
 value class NucleusId(val value: String)
-
-// ============================================================================
-// Entidades e Estruturas de Domínio
-// ============================================================================
 
 data class Character(
   val id: CharacterId, val name: String
@@ -41,4 +33,24 @@ class Nucleus(
   fun containsCharacter(characterId: CharacterId): Boolean {
     return _characters.contains(characterId)
   }
+}
+
+data class GameAction(
+  val name: String, val actorId: CharacterId, val arguments: Map<String, Any?> = emptyMap()
+)
+
+data class GameFact(
+  val name: String, val arguments: Map<String, Any?> = emptyMap()
+)
+
+sealed interface GameActionResult {
+  val facts: List<GameFact>
+
+  data class Success(
+    override val facts: List<GameFact> = emptyList()
+  ) : GameActionResult
+
+  data class Rejected(
+    val reason: String, override val facts: List<GameFact> = emptyList()
+  ) : GameActionResult
 }
