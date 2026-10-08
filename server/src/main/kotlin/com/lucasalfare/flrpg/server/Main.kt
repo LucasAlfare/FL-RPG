@@ -156,6 +156,27 @@ suspend fun handleConnection(
                 }
               }
               connection.send(responseMessage)
+
+              if (result is GameActionResult.Success) {
+                for (fact in result.facts) {
+                  val interestedCharacters = actionProcessor.findInterestedCharacters(fact)
+                  for (interestedId in interestedCharacters) {
+                    if (interestedId != characterId) {
+                      val targetConnection = registry.findByCharacterId(interestedId)
+                      val targetSessionId = targetConnection?.sessionId
+                      if (targetConnection != null && targetSessionId != null) {
+                        val eventMessage = ServerEvent(
+                          metadata = MessageMetadata(
+                            messageId = MessageId(UUID.randomUUID().toString()),
+                            sessionId = targetSessionId,
+                            sequence = Sequence.ZERO
+                          ), type = fact.name, payload = fact.arguments.mapValues { it.value?.toString() ?: "" })
+                        targetConnection.send(eventMessage)
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }

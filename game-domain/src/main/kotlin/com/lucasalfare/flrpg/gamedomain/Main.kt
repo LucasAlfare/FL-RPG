@@ -1,5 +1,3 @@
-@file:Suppress("unused")
-
 package com.lucasalfare.flrpg.gamedomain
 
 import com.lucasalfare.flworld.World
@@ -37,6 +35,12 @@ class Nucleus(
   fun containsCharacter(characterId: CharacterId): Boolean {
     return _characters.contains(characterId)
   }
+
+  fun getCharactersAtLocation(locationId: WorldLocationId): List<CharacterId> {
+    return _characters.filter { characterId ->
+      world.state.getLocation(WorldEntityId(characterId.value)) == locationId
+    }
+  }
 }
 
 data class GameAction(
@@ -68,6 +72,12 @@ class GameActionProcessor(val nucleus: Nucleus) {
     }
   }
 
+  fun findInterestedCharacters(fact: GameFact): List<CharacterId> {
+    val locationIdStr = fact.arguments["locationId"] as? String ?: return emptyList()
+    val locationId = WorldLocationId(locationIdStr)
+    return nucleus.getCharactersAtLocation(locationId)
+  }
+
   private fun processEnterWorld(action: GameAction): GameActionResult {
     if (nucleus.containsCharacter(action.actorId)) {
       return GameActionResult.Rejected("Character '${action.actorId.value}' is already in the world")
@@ -86,10 +96,8 @@ class GameActionProcessor(val nucleus: Nucleus) {
     nucleus.registerCharacter(action.actorId)
 
     val fact = GameFact(
-      name = "character_entered",
-      arguments = mapOf(
-        "characterId" to action.actorId.value,
-        "locationId" to locationId.value
+      name = "character_entered", arguments = mapOf(
+        "characterId" to action.actorId.value, "locationId" to locationId.value
       )
     )
 
