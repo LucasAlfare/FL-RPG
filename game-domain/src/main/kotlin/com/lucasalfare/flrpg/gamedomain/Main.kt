@@ -3,6 +3,10 @@
 package com.lucasalfare.flrpg.gamedomain
 
 import com.lucasalfare.flworld.World
+import com.lucasalfare.flworld.WorldEntity
+import com.lucasalfare.flworld.WorldEntityId
+import com.lucasalfare.flworld.WorldLocation
+import com.lucasalfare.flworld.WorldLocationId
 
 @JvmInline
 value class CharacterId(val value: String)
@@ -65,7 +69,31 @@ class GameActionProcessor(val nucleus: Nucleus) {
   }
 
   private fun processEnterWorld(action: GameAction): GameActionResult {
-    return GameActionResult.Rejected("Action 'enter_world' not yet implemented")
+    if (nucleus.containsCharacter(action.actorId)) {
+      return GameActionResult.Rejected("Character '${action.actorId.value}' is already in the world")
+    }
+
+    val locationIdStr = action.arguments["locationId"] as? String ?: "spawn"
+    val locationId = WorldLocationId(locationIdStr)
+
+    if (nucleus.world.graph.getLocation(locationId) == null) {
+      nucleus.world.graph.registerLocation(WorldLocation(locationId))
+    }
+
+    val entityId = WorldEntityId(action.actorId.value)
+    nucleus.world.registerEntity(WorldEntity(entityId))
+    nucleus.world.state.setLocation(entityId, locationId)
+    nucleus.registerCharacter(action.actorId)
+
+    val fact = GameFact(
+      name = "character_entered",
+      arguments = mapOf(
+        "characterId" to action.actorId.value,
+        "locationId" to locationId.value
+      )
+    )
+
+    return GameActionResult.Success(facts = listOf(fact))
   }
 
   private fun processMove(action: GameAction): GameActionResult {
