@@ -18,6 +18,8 @@ import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 // domain
 interface Connection {
@@ -109,9 +111,13 @@ class KtorConnection(
   override var sessionId: SessionId? = null,
   private val session: DefaultWebSocketServerSession
 ) : Connection {
+  private val sendMutex = Mutex()
+
   override suspend fun send(message: ServerMessage) {
     runCatching {
-      session.send(message.toJson())
+      sendMutex.withLock {
+        session.send(message.toJson())
+      }
     }
   }
 
