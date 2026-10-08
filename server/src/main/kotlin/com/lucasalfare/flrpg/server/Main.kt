@@ -6,10 +6,15 @@ import com.lucasalfare.flrpg.communicationprotocol.ClientHello
 import com.lucasalfare.flrpg.communicationprotocol.ClientMessage
 import com.lucasalfare.flrpg.communicationprotocol.MessageId
 import com.lucasalfare.flrpg.communicationprotocol.ProtocolMessage
+import com.lucasalfare.flrpg.communicationprotocol.ProtocolValidator
 import com.lucasalfare.flrpg.communicationprotocol.ServerMessage
 import com.lucasalfare.flrpg.communicationprotocol.ServerWelcome
 import com.lucasalfare.flrpg.communicationprotocol.SessionId
 import com.lucasalfare.flrpg.communicationprotocol.SessionLifecycleHandler
+import com.lucasalfare.flrpg.communicationprotocol.SessionSequenceTracker
+import com.lucasalfare.flrpg.communicationprotocol.SessionState
+import com.lucasalfare.flrpg.communicationprotocol.StructuralValidator
+import com.lucasalfare.flrpg.communicationprotocol.ValidationResult
 import com.lucasalfare.flrpg.communicationprotocol.toJson
 import com.lucasalfare.flrpg.communicationprotocol.toProtocolMessage
 import io.ktor.server.application.install
@@ -48,25 +53,57 @@ class ConnectionRegistry {
 
   fun findById(id: String): Connection? = connections[id]
 
+  fun findBySessionId(sessionId: SessionId): Connection? = connections.values.firstOrNull { it.sessionId == sessionId }
+
   fun activeConnections(): List<Connection> = connections.values.toList()
 }
 
 suspend fun handleConnection(
   connection: Connection,
   registry: ConnectionRegistry,
-  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler()
+  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
+  structuralValidator: StructuralValidator = StructuralValidator(),
+  protocolValidator: ProtocolValidator = ProtocolValidator()
 ) {
   registry.register(connection)
+  var sequenceTracker: SessionSequenceTracker? = null
+
   try {
     while (true) {
       val message = connection.receive() ?: break
-      if (message is ClientHello) {
-        val replyMessageId = MessageId(UUID.randomUUID().toString())
-        val (_, response) = sessionLifecycleHandler.processHello(message, replyMessageId)
-        if (response is ServerWelcome) {
-          connection.sessionId = response.metadata.sessionId
+
+      if (structuralValidator.validate(message) !is ValidationResult.Valid) {
+        continue
+      }
+
+      val currentSessionId = connection.sessionId
+      if (currentSessionId == null) {
+        if (protocolValidator.validateSessionState(SessionState.NON_EXISTENT, message) !is ValidationResult.Valid) {
+          continue
         }
-        connection.send(response)
+
+        if (message is ClientHello) {
+          val replyMessageId = MessageId(UUID.randomUUID().toString())
+          val (_, response) = sessionLifecycleHandler.processHello(message, replyMessageId)
+          if (response is ServerWelcome) {
+            connection.sessionId = response.metadata.sessionId
+            sequenceTracker = SessionSequenceTracker(response.metadata.sessionId)
+          }
+          connection.send(response)
+        }
+      } else {
+        if (protocolValidator.validateSessionState(SessionState.ESTABLISHED, message) !is ValidationResult.Valid) {
+          continue
+        }
+
+        if (message.sessionId != currentSessionId) {
+          continue
+        }
+
+        val status = sequenceTracker?.processInbound(message)
+        if (status != null && !status.isAccepted) {
+          continue
+        }
       }
     }
   } finally {
