@@ -17,6 +17,9 @@ dependencies {
   implementation("com.github.LucasAlfare:FL-Combat:1.0.0")
   implementation("com.github.LucasAlfare:FL-World:1.0.0")
   implementation("com.github.LucasAlfare:FL-Economy:1.2.0")
+
+  implementation("io.ktor:ktor-server-netty:3.6.0")
+
   testImplementation(kotlin("test"))
 }
 
