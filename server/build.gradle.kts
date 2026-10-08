@@ -7,13 +7,13 @@ version = "1.0-SNAPSHOT"
 
 repositories {
   mavenCentral()
-  maven { url = uri("https://jitpack.io") }
 }
 
 val ktorVersion = "3.6.0"
 
 dependencies {
   implementation(project(":communication-protocol"))
+  implementation(project(":game-domain"))
 
   implementation("io.ktor:ktor-server-netty:$ktorVersion")
   implementation("io.ktor:ktor-server-websockets:$ktorVersion")
