@@ -19,6 +19,7 @@ dependencies {
   implementation("com.github.LucasAlfare:FL-Economy:1.2.0")
 
   implementation("io.ktor:ktor-server-netty:3.6.0")
+  implementation("io.ktor:ktor-server-websockets:3.6.0")
 
   testImplementation(kotlin("test"))
 }
