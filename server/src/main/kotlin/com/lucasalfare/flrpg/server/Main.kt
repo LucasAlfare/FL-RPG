@@ -1,5 +1,10 @@
 package com.lucasalfare.flrpg.server
 
+import com.lucasalfare.flrpg.communicationprotocol.ClientMessage
+import com.lucasalfare.flrpg.communicationprotocol.ProtocolMessage
+import com.lucasalfare.flrpg.communicationprotocol.ServerMessage
+import com.lucasalfare.flrpg.communicationprotocol.toJson
+import com.lucasalfare.flrpg.communicationprotocol.toProtocolMessage
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -15,14 +20,13 @@ import io.ktor.websocket.send
 
 // domain
 interface Connection {
-  suspend fun send(message: String)
-  suspend fun receive(): String?
+  suspend fun send(message: ServerMessage)
+  suspend fun receive(): ClientMessage?
 }
 
 suspend fun handleConnection(connection: Connection) {
   while (true) {
     val message = connection.receive() ?: break
-    connection.send("echo: $message")
   }
 }
 
@@ -30,15 +34,19 @@ suspend fun handleConnection(connection: Connection) {
 class KtorConnection(
   private val session: DefaultWebSocketServerSession
 ) : Connection {
-  override suspend fun send(message: String) {
-    session.send(message)
+  override suspend fun send(message: ServerMessage) {
+    session.send(message.toJson())
   }
 
-  override suspend fun receive(): String? {
+  override suspend fun receive(): ClientMessage? {
     try {
       for (frame in session.incoming) {
         if (frame is Frame.Text) {
-          return frame.readText()
+          val text = frame.readText()
+          val protocolMessage = runCatching { text.toProtocolMessage<ProtocolMessage>() }.getOrNull()
+          if (protocolMessage is ClientMessage) {
+            return protocolMessage
+          }
         }
       }
     } catch (_: Exception) {
