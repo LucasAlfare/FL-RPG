@@ -3,6 +3,7 @@
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
+import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -147,21 +148,23 @@ class KtorConnection(
 
 // entry point
 fun main() {
-  val connectionRegistry = ConnectionRegistry()
-  val sessionLifecycleHandler = SessionLifecycleHandler()
+  embeddedServer(Netty, port = 8080, module = Application::module).start(wait = true)
+}
 
-  embeddedServer(Netty, port = 8080) {
-    install(WebSockets)
+fun Application.module(
+  connectionRegistry: ConnectionRegistry = ConnectionRegistry(),
+  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler()
+) {
+  install(WebSockets)
 
-    routing {
-      get("/health") {
-        call.respondText("OK")
-      }
-
-      webSocket("/game") {
-        val connection = KtorConnection(session = this)
-        handleConnection(connection, connectionRegistry, sessionLifecycleHandler)
-      }
+  routing {
+    get("/health") {
+      call.respondText("OK")
     }
-  }.start(wait = true)
+
+    webSocket("/game") {
+      val connection = KtorConnection(session = this)
+      handleConnection(connection, connectionRegistry, sessionLifecycleHandler)
+    }
+  }
 }
