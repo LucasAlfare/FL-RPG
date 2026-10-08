@@ -27,6 +27,7 @@ import io.ktor.server.websocket.DefaultWebSocketServerSession
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
+import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import java.util.UUID
@@ -38,6 +39,7 @@ interface Connection {
   var sessionId: SessionId?
   suspend fun send(message: ServerMessage)
   suspend fun receive(): ClientMessage?
+  suspend fun close()
 }
 
 class ConnectionRegistry {
@@ -106,7 +108,9 @@ suspend fun handleConnection(
         }
       }
     }
+  } catch (_: Exception) {
   } finally {
+    runCatching { connection.close() }
     registry.unregister(connection.id)
   }
 }
@@ -118,7 +122,9 @@ class KtorConnection(
   private val session: DefaultWebSocketServerSession
 ) : Connection {
   override suspend fun send(message: ServerMessage) {
-    session.send(message.toJson())
+    runCatching {
+      session.send(message.toJson())
+    }
   }
 
   override suspend fun receive(): ClientMessage? {
@@ -136,6 +142,12 @@ class KtorConnection(
       return null
     }
     return null
+  }
+
+  override suspend fun close() {
+    runCatching {
+      session.close()
+    }
   }
 }
 
