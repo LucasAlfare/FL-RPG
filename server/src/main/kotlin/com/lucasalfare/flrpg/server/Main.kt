@@ -2,21 +2,7 @@
 
 package com.lucasalfare.flrpg.server
 
-import com.lucasalfare.flrpg.communicationprotocol.ClientHello
-import com.lucasalfare.flrpg.communicationprotocol.ClientMessage
-import com.lucasalfare.flrpg.communicationprotocol.MessageId
-import com.lucasalfare.flrpg.communicationprotocol.ProtocolMessage
-import com.lucasalfare.flrpg.communicationprotocol.ProtocolValidator
-import com.lucasalfare.flrpg.communicationprotocol.ServerMessage
-import com.lucasalfare.flrpg.communicationprotocol.ServerWelcome
-import com.lucasalfare.flrpg.communicationprotocol.SessionId
-import com.lucasalfare.flrpg.communicationprotocol.SessionLifecycleHandler
-import com.lucasalfare.flrpg.communicationprotocol.SessionSequenceTracker
-import com.lucasalfare.flrpg.communicationprotocol.SessionState
-import com.lucasalfare.flrpg.communicationprotocol.StructuralValidator
-import com.lucasalfare.flrpg.communicationprotocol.ValidationResult
-import com.lucasalfare.flrpg.communicationprotocol.toJson
-import com.lucasalfare.flrpg.communicationprotocol.toProtocolMessage
+import com.lucasalfare.flrpg.communicationprotocol.*
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
@@ -86,7 +72,9 @@ suspend fun handleConnection(
 
         if (message is ClientHello) {
           val replyMessageId = MessageId(UUID.randomUUID().toString())
-          val (_, response) = sessionLifecycleHandler.processHello(message, replyMessageId)
+          val (_, response) = synchronized(sessionLifecycleHandler) {
+            sessionLifecycleHandler.processHello(message, replyMessageId)
+          }
           if (response is ServerWelcome) {
             connection.sessionId = response.metadata.sessionId
             sequenceTracker = SessionSequenceTracker(response.metadata.sessionId)
