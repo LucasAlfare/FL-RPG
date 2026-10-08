@@ -1,4 +1,6 @@
-package com.lucasalfare.flrpg.server
+@file:Suppress("unused")
+
+package com.lucasalfare.flrpg.gamedomain
 
 @JvmInline
 value class ThingId(val value: String) {

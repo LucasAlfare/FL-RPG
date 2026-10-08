@@ -7,4 +7,5 @@ include(
   ":client",
   ":server",
   ":communication-protocol",
+  ":game-domain",
 )
