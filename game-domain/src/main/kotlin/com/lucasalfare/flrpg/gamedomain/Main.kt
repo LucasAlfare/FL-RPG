@@ -27,43 +27,64 @@ data class Character(
 class Nucleus(
   val id: NucleusId, val world: World = World(WorldId(id.value))
 ) {
+  internal val stateLock = Any()
+
   private val _characters = mutableSetOf<CharacterId>()
 
   val characters: Set<CharacterId>
-    get() = _characters
+    get() = synchronized(stateLock) {
+      _characters.toSet()
+    }
 
   fun registerCharacter(characterId: CharacterId) {
-    _characters.add(characterId)
+    synchronized(stateLock) {
+      _characters.add(characterId)
+    }
   }
 
   fun unregisterCharacter(characterId: CharacterId) {
-    _characters.remove(characterId)
+    synchronized(stateLock) {
+      _characters.remove(characterId)
+    }
   }
 
-  fun containsCharacter(characterId: CharacterId): Boolean {
-    return _characters.contains(characterId)
+  fun containsCharacter(characterId: CharacterId): Boolean = synchronized(stateLock) {
+    _characters.contains(characterId)
   }
 
-  fun getCharactersAtLocation(locationId: WorldLocationId): List<CharacterId> {
-    return _characters.filter { characterId ->
-      world.state.getLocation(WorldEntityId(characterId.value)) == locationId
+  fun getCharactersAtLocation(
+    locationId: WorldLocationId
+  ): List<CharacterId> = synchronized(stateLock) {
+    _characters.filter { characterId ->
+      world.state.getLocation(
+        WorldEntityId(characterId.value)
+      ) == locationId
     }
   }
 
   fun registerLocation(locationId: String) {
-    val id = WorldLocationId(locationId)
-    if (world.graph.getLocation(id) == null) {
-      world.graph.registerLocation(WorldLocation(id))
+    synchronized(stateLock) {
+      val id = WorldLocationId(locationId)
+
+      if (world.graph.getLocation(id) == null) {
+        world.graph.registerLocation(WorldLocation(id))
+      }
     }
   }
 
-  fun connectLocations(fromId: String, toId: String, connectionId: String = "conn_${fromId}_$toId") {
-    registerLocation(fromId)
-    registerLocation(toId)
-    val conn = WorldConnection(
-      id = WorldConnectionId(connectionId), from = WorldLocationId(fromId), to = WorldLocationId(toId)
-    )
-    world.graph.registerConnection(conn)
+  fun connectLocations(
+    fromId: String, toId: String, connectionId: String = "conn_${fromId}_$toId"
+  ) {
+    synchronized(stateLock) {
+      registerLocation(fromId)
+      registerLocation(toId)
+
+      val connection = WorldConnection(
+        id = WorldConnectionId(connectionId), from = WorldLocationId(fromId), to = WorldLocationId(toId)
+      )
+
+      world.graph.registerConnection(connection)
+    }
   }
 }
 
@@ -87,24 +108,81 @@ sealed interface GameActionResult {
   ) : GameActionResult
 }
 
-class GameActionProcessor(val nucleus: Nucleus) {
-  fun process(action: GameAction): GameActionResult {
+data class GameFactAudience(
+  val fact: GameFact, val characterIds: List<CharacterId>
+)
+
+data class GameActionExecution(
+  val result: GameActionResult, val factAudiences: List<GameFactAudience>
+)
+
+class GameActionProcessor(
+  val nucleus: Nucleus
+) {
+  fun process(action: GameAction): GameActionResult = synchronized(nucleus.stateLock) {
+    processLocked(action)
+  }
+
+  fun processWithAudiences(
+    action: GameAction
+  ): GameActionExecution = synchronized(nucleus.stateLock) {
+    val result = processLocked(action)
+
+    GameActionExecution(
+      result = result, factAudiences = findFactAudiencesLocked(result.facts)
+    )
+  }
+
+  fun advanceTime(ticks: Long): List<GameFact> = synchronized(nucleus.stateLock) {
+    advanceTimeLocked(ticks)
+  }
+
+  fun advanceTimeWithAudiences(
+    ticks: Long
+  ): List<GameFactAudience> = synchronized(nucleus.stateLock) {
+    val facts = advanceTimeLocked(ticks)
+    findFactAudiencesLocked(facts)
+  }
+
+  fun findInterestedCharacters(
+    fact: GameFact
+  ): List<CharacterId> = synchronized(nucleus.stateLock) {
+    findInterestedCharactersLocked(fact)
+  }
+
+  fun findFactAudiences(
+    facts: List<GameFact>
+  ): List<GameFactAudience> = synchronized(nucleus.stateLock) {
+    findFactAudiencesLocked(facts)
+  }
+
+  private fun processLocked(
+    action: GameAction
+  ): GameActionResult {
     return when (action.name) {
       "enter_world" -> processEnterWorld(action)
       "move" -> processMove(action)
-      else -> GameActionResult.Rejected("Unknown action: ${action.name}")
+      else -> GameActionResult.Rejected(
+        "Unknown action: ${action.name}"
+      )
     }
   }
 
-  fun advanceTime(ticks: Long): List<GameFact> {
+  private fun advanceTimeLocked(
+    ticks: Long
+  ): List<GameFact> {
     val activeBefore = nucleus.world.getActiveMovements()
+
     nucleus.world.advance(WorldDuration(ticks))
+
     val facts = mutableListOf<GameFact>()
 
     for (movement in activeBefore) {
       val currentMovement = nucleus.world.getMovement(movement.entityId)
+
       if (currentMovement == null || !currentMovement.isInProgress) {
         val currentLocation = nucleus.world.state.getLocation(movement.entityId)
+
         if (currentLocation == movement.destination) {
           facts.add(
             GameFact(
@@ -132,25 +210,48 @@ class GameActionProcessor(val nucleus: Nucleus) {
     return facts
   }
 
-  fun findInterestedCharacters(fact: GameFact): List<CharacterId> {
-    val locationIdStr = fact.arguments["locationId"] as? String ?: return emptyList()
-    val locationId = WorldLocationId(locationIdStr)
-    return nucleus.getCharactersAtLocation(locationId)
+  private fun findInterestedCharactersLocked(
+    fact: GameFact
+  ): List<CharacterId> {
+    val locationIdValue = fact.arguments["locationId"] as? String ?: return emptyList()
+
+    return nucleus.getCharactersAtLocation(
+      WorldLocationId(locationIdValue)
+    )
   }
 
-  private fun processEnterWorld(action: GameAction): GameActionResult {
+  private fun findFactAudiencesLocked(
+    facts: List<GameFact>
+  ): List<GameFactAudience> = facts.map { fact ->
+    GameFactAudience(
+      fact = fact, characterIds = findInterestedCharactersLocked(fact)
+    )
+  }
+
+  private fun processEnterWorld(
+    action: GameAction
+  ): GameActionResult {
     if (nucleus.containsCharacter(action.actorId)) {
-      return GameActionResult.Rejected("Character '${action.actorId.value}' is already in the world")
+      return GameActionResult.Rejected(
+        "Character '${action.actorId.value}' is already in the world"
+      )
     }
 
-    val locationIdStr = action.arguments["locationId"] as? String ?: "spawn"
-    val locationId = WorldLocationId(locationIdStr)
+    val locationIdValue = action.arguments["locationId"] as? String ?: "spawn"
 
+    val locationId = WorldLocationId(locationIdValue)
     nucleus.registerLocation(locationId.value)
 
     val entityId = WorldEntityId(action.actorId.value)
-    nucleus.world.registerEntity(WorldEntity(entityId))
-    nucleus.world.state.setLocation(entityId, locationId)
+
+    nucleus.world.registerEntity(
+      WorldEntity(entityId)
+    )
+
+    nucleus.world.state.setLocation(
+      entityId, locationId
+    )
+
     nucleus.registerCharacter(action.actorId)
 
     val fact = GameFact(
@@ -159,37 +260,57 @@ class GameActionProcessor(val nucleus: Nucleus) {
       )
     )
 
-    return GameActionResult.Success(facts = listOf(fact))
+    return GameActionResult.Success(
+      facts = listOf(fact)
+    )
   }
 
-  private fun processMove(action: GameAction): GameActionResult {
+  private fun processMove(
+    action: GameAction
+  ): GameActionResult {
     if (!nucleus.containsCharacter(action.actorId)) {
-      return GameActionResult.Rejected("Character '${action.actorId.value}' is not in the world")
+      return GameActionResult.Rejected(
+        "Character '${action.actorId.value}' is not in the world"
+      )
     }
 
-    val targetLocationIdStr = (action.arguments["targetLocationId"] ?: action.arguments["destination"]
-    ?: action.arguments["locationId"]) as? String
-      ?: return GameActionResult.Rejected("Missing target location argument")
+    val targetLocationIdValue = (action.arguments["targetLocationId"] ?: action.arguments["destination"]
+    ?: action.arguments["locationId"]) as? String ?: return GameActionResult.Rejected(
+      "Missing target location argument"
+    )
 
     val entityId = WorldEntityId(action.actorId.value)
-    val currentLocationId = nucleus.world.state.getLocation(entityId)
-      ?: return GameActionResult.Rejected("Character '${action.actorId.value}' has no location in the world")
 
-    val destinationId = WorldLocationId(targetLocationIdStr)
+    val currentLocationId = nucleus.world.state.getLocation(entityId) ?: return GameActionResult.Rejected(
+      "Character '${action.actorId.value}' has no location in the world"
+    )
+
+    val destinationId = WorldLocationId(targetLocationIdValue)
+
     if (nucleus.world.graph.getLocation(destinationId) == null) {
-      return GameActionResult.Rejected("Destination location '${destinationId.value}' does not exist")
+      return GameActionResult.Rejected(
+        "Destination location '${destinationId.value}' does not exist"
+      )
     }
 
     if (currentLocationId == destinationId) {
-      return GameActionResult.Rejected("Character is already at location '${destinationId.value}'")
+      return GameActionResult.Rejected(
+        "Character is already at location '${destinationId.value}'"
+      )
     }
 
     val path = UnweightedPathFinder().findPath(
       graph = nucleus.world.graph, from = currentLocationId, to = destinationId
-    ) ?: return GameActionResult.Rejected("No valid path to location '${destinationId.value}'")
+    ) ?: return GameActionResult.Rejected(
+      "No valid path to location '${destinationId.value}'"
+    )
 
-    val duration = WorldDuration(path.connections.size.coerceAtLeast(1).toLong())
+    val duration = WorldDuration(
+      path.connections.size.coerceAtLeast(1).toLong()
+    )
+
     val startInstant = nucleus.world.clock.currentInstant
+
     val movement = WorldMovement(
       entityId = entityId,
       origin = currentLocationId,
@@ -199,9 +320,9 @@ class GameActionProcessor(val nucleus: Nucleus) {
       duration = duration
     )
 
-    return runCatching {
+    return try {
       nucleus.world.startMovement(movement)
-    }.fold(onSuccess = {
+
       val fact = GameFact(
         name = "character_moved", arguments = mapOf(
           "characterId" to action.actorId.value,
@@ -210,9 +331,14 @@ class GameActionProcessor(val nucleus: Nucleus) {
           "locationId" to currentLocationId.value
         )
       )
-      GameActionResult.Success(facts = listOf(fact))
-    }, onFailure = { ex ->
-      GameActionResult.Rejected("Failed to start movement: ${ex.message}")
-    })
+
+      GameActionResult.Success(
+        facts = listOf(fact)
+      )
+    } catch (ex: Exception) {
+      GameActionResult.Rejected(
+        "Failed to start movement: ${ex.message}"
+      )
+    }
   }
 }
