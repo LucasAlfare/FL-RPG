@@ -88,6 +88,8 @@ suspend fun distributeAudiences(
 ) {
   for (audience in audiences) {
     val fact = audience.fact
+    val protocolFact = ProtocolFact(
+      name = fact.name, arguments = fact.arguments.mapValues { (_, value) -> value?.toString() ?: "" })
 
     for (interestedId in audience.characterIds) {
       if (interestedId == excludeCharacterId) {
@@ -101,9 +103,8 @@ suspend fun distributeAudiences(
       val eventMessage = ServerEvent(
         metadata = MessageMetadata(
           messageId = MessageId(UUID.randomUUID().toString()), sessionId = targetSessionId, sequence = Sequence.ZERO
-        ), type = fact.name, payload = fact.arguments.mapValues { (_, value) ->
-          value?.toString() ?: ""
-        })
+        ), type = protocolFact.name, payload = protocolFact.arguments
+      )
 
       targetConnection.send(eventMessage)
     }
@@ -226,18 +227,19 @@ suspend fun handleConnection(
 
             val responseMessage = when (result) {
               is GameActionResult.Success -> {
-                val resultMap = result.facts.flatMap { fact ->
-                    fact.arguments.entries
-                  }.associate { entry ->
-                    entry.key to (entry.value?.toString() ?: "")
-                  }
+                val protocolFacts = result.facts.map { fact ->
+                  ProtocolFact(
+                    name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
+                      value?.toString() ?: ""
+                    })
+                }
 
                 ServerCompleted(
                   metadata = MessageMetadata(
                     messageId = MessageId(
                       UUID.randomUUID().toString()
                     ), sessionId = currentSessionId, sequence = Sequence.ZERO, correlationId = correlationId
-                  ), result = resultMap
+                  ), facts = protocolFacts
                 )
               }
 

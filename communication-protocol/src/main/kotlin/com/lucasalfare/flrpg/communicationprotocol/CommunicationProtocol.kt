@@ -55,7 +55,6 @@ value class CorrelationId(val value: String) {
   }
 }
 
-// this is a Mc-Gyverism (?) 💀
 fun CorrelationId(messageId: MessageId): CorrelationId = CorrelationId(messageId.value)
 
 @Serializable
@@ -271,6 +270,15 @@ data class ClientResyncRequest(
 ) : ClientMessage
 
 @Serializable
+data class ProtocolFact(
+  val name: String, val arguments: Map<String, String> = emptyMap()
+) {
+  init {
+    require(name.isNotBlank()) { "Fact name must not be blank." }
+  }
+}
+
+@Serializable
 @SerialName("ServerAccepted")
 data class ServerAccepted(
   override val metadata: MessageMetadata, val detail: String? = null
@@ -294,7 +302,9 @@ data class ServerRejected(
 @Serializable
 @SerialName("ServerCompleted")
 data class ServerCompleted(
-  override val metadata: MessageMetadata, val result: Map<String, String> = emptyMap()
+  override val metadata: MessageMetadata,
+  val facts: List<ProtocolFact> = emptyList(),
+  @Deprecated("Use facts instead") val result: Map<String, String> = emptyMap()
 ) : ServerMessage {
   init {
     require(metadata.correlationId != null) { "ServerCompleted must have a correlationId." }
@@ -801,9 +811,12 @@ class StructuralValidator(val limits: ProtocolLimits = ProtocolLimits()) {
   }
 
   private fun validateCompleted(completed: ServerCompleted): ValidationResult {
-    for ((k, v) in completed.result) {
-      if (k.length > limits.maxTextLength || v.length > limits.maxTextLength) {
-        return invalid("Result entry length exceeds maximum of ${limits.maxTextLength}.")
+    for (fact in completed.facts) {
+      if (fact.name.isBlank()) return invalid("Fact name cannot be blank.")
+      for ((k, v) in fact.arguments) {
+        if (k.length > limits.maxTextLength || v.length > limits.maxTextLength) {
+          return invalid("Fact argument length exceeds maximum of ${limits.maxTextLength}.")
+        }
       }
     }
     return ValidationResult.Valid
