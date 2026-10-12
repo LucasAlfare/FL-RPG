@@ -100,6 +100,7 @@ class ClientPresentationState {
         document = message.document
         connectionMessage = "CONNECTED · presentation revision ${document.revision.value}"
       }
+
       is PresentationPatch -> {
         val updatedDocument = runCatching { document.applyPatch(message) }
         updatedDocument.onSuccess {
@@ -109,6 +110,7 @@ class ClientPresentationState {
           connectionMessage = "PRESENTATION OUT OF DATE · snapshot required"
         }
       }
+
       is ServerRejected -> connectionMessage = "SERVER REJECTED · ${message.reason}"
       is ServerFailed -> connectionMessage = "SERVER FAILED · ${message.error}"
       is ServerProtocolError -> connectionMessage = "PROTOCOL ERROR · ${message.description}"
@@ -166,14 +168,17 @@ class ClientPresentationState {
         screen = ClientScreen.MENU
         true
       }
+
       "V", "VOLTAR" -> {
         screen = ClientScreen.PRESENTATION
         true
       }
+
       "T", "TEMA" -> if (screen == ClientScreen.MENU) {
         darkThemeEnabled = !darkThemeEnabled
         true
       } else false
+
       else -> false
     }
   }
@@ -208,7 +213,12 @@ private fun TerminalApp(state: ClientPresentationState) {
           Text("FL-RPG", color = theme.accent, fontSize = 18.sp, fontFamily = mono, fontWeight = FontWeight.Bold)
           Text("  ·  cliente textual", color = theme.muted, fontSize = 13.sp, fontFamily = mono)
           Spacer(Modifier.weight(1f))
-          Text("[ ${if (state.darkThemeEnabled) "DARK" else "LIGHT"} ]", color = theme.muted, fontSize = 12.sp, fontFamily = mono)
+          Text(
+            "[ ${if (state.darkThemeEnabled) "DARK" else "LIGHT"} ]",
+            color = theme.muted,
+            fontSize = 12.sp,
+            fontFamily = mono
+          )
         }
         Text("${"─".repeat(100)}", color = theme.border, fontSize = 12.sp, fontFamily = mono, maxLines = 1)
       }
@@ -262,7 +272,9 @@ private fun PresentationRegionPane(
   modifier: Modifier = Modifier,
 ) {
   TerminalTile(label, theme, modifier) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+      Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
       if (blocks.isEmpty()) {
         TextBlock(theme, "No data received.", color = theme.muted, small = true)
       } else {
@@ -285,13 +297,16 @@ private fun PresentationBlockContent(content: BlockContent, theme: TerminalTheme
         TextBlock(theme, if (content.isOrdered) "${index + 1}. $item" else "$prefix$item")
       }
     }
+
     is BlockContent.Choices -> content.choices.forEach { choice ->
       val shortcut = choice.shortcut?.let { "[$it] " } ?: ""
       val state = if (choice.enabled) "" else " (unavailable)"
       TextBlock(theme, "$shortcut${choice.text}$state", color = if (choice.enabled) theme.foreground else theme.muted)
     }
+
     is BlockContent.Feed -> {
-      val items = if (content.ordering == FeedOrdering.REVERSE_CHRONOLOGICAL) content.items.reversed() else content.items
+      val items =
+        if (content.ordering == FeedOrdering.REVERSE_CHRONOLOGICAL) content.items.reversed() else content.items
       items.forEach { item -> TextBlock(theme, item.text, color = colorFor(item.style, theme), small = true) }
     }
   }
@@ -326,7 +341,9 @@ private fun CommandLine(state: ClientPresentationState, theme: TerminalTheme) {
       cursorBrush = SolidColor(theme.accent),
       decorationBox = { inner ->
         Box {
-          if (state.input.isEmpty()) Text("type a command · M menu · Enter send", color = theme.muted, fontFamily = mono, fontSize = 14.sp)
+          if (state.input.isEmpty()) Text(
+            "type a command · M menu · Enter send", color = theme.muted, fontFamily = mono, fontSize = 14.sp
+          )
           inner()
         }
       },
@@ -341,7 +358,10 @@ private fun TerminalTile(
   modifier: Modifier = Modifier,
   content: @Composable () -> Unit,
 ) {
-  Column(modifier.border(1.dp, theme.border).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+  Column(
+    modifier.border(1.dp, theme.border).padding(horizontal = 10.dp, vertical = 8.dp),
+    verticalArrangement = Arrangement.spacedBy(7.dp)
+  ) {
     SelectionContainer {
       Text("┌─ $title", color = theme.accent, fontFamily = mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
@@ -361,7 +381,9 @@ private fun TextBlock(
     text = text,
     color = color,
     fontFamily = mono,
-    fontSize = when { small -> 12.sp; heading -> 16.sp; else -> 14.sp },
+    fontSize = when {
+      small -> 12.sp; heading -> 16.sp; else -> 14.sp
+    },
     fontWeight = if (heading) FontWeight.Bold else FontWeight.Normal,
     lineHeight = if (small) 17.sp else 22.sp,
   )
