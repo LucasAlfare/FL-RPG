@@ -15,16 +15,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -34,14 +28,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material3.Text
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import com.lucasalfare.flrpg.communicationprotocol.BlockContent
+import com.lucasalfare.flrpg.communicationprotocol.FeedOrdering
+import com.lucasalfare.flrpg.communicationprotocol.PresentationDocument
+import com.lucasalfare.flrpg.communicationprotocol.PresentationPatch
+import com.lucasalfare.flrpg.communicationprotocol.PresentationRegion
+import com.lucasalfare.flrpg.communicationprotocol.PresentationSnapshot
+import com.lucasalfare.flrpg.communicationprotocol.ServerFailed
+import com.lucasalfare.flrpg.communicationprotocol.ServerMessage
+import com.lucasalfare.flrpg.communicationprotocol.ServerProtocolError
+import com.lucasalfare.flrpg.communicationprotocol.ServerRejected
+import com.lucasalfare.flrpg.communicationprotocol.TextStyle as ProtocolTextStyle
+import com.lucasalfare.flrpg.communicationprotocol.applyPatch
 
 private data class TerminalTheme(
   val background: Color,
@@ -60,83 +72,48 @@ private val lightTheme = TerminalTheme(
   muted = Color(0xFF74777D), accent = Color(0xFF356C53), border = Color(0xFFB9B8B0),
 )
 
-private enum class Screen(val label: String) {
-  GAME("JOGO"), MENU("MENU"), INVENTORY("INVENTÁRIO"), EQUIPMENT("EQUIPAMENTOS"),
-  ACTIVITIES("ATIVIDADES"), DISCOVERIES("DESCOBERTAS"), PLAYERS("JOGADORES PRÓXIMOS"),
-  COMBAT("COMBATE · DEMONSTRAÇÃO"), TRADE("NEGOCIAÇÃO · DEMONSTRAÇÃO"), TRAVEL("VIAGEM · DEMONSTRAÇÃO"),
-}
+private enum class ClientScreen { PRESENTATION, MENU }
 
-private data class LogLine(val time: String, val text: String)
-
-private class DemoSession {
-  var screen by mutableStateOf(Screen.GAME)
-  var dark by mutableStateOf(true)
+/**
+ * State owned by the client. A future network adapter calls [receive] for every server message
+ * and supplies a command sink to [submitCommand]. Game state remains entirely server-owned.
+ */
+class ClientPresentationState {
+  var document by mutableStateOf(PresentationDocument())
+    private set
+  var darkThemeEnabled by mutableStateOf(true)
+    private set
+  private var screen by mutableStateOf(ClientScreen.PRESENTATION)
+  val isMenuOpen: Boolean get() = screen == ClientScreen.MENU
   var input by mutableStateOf("")
+    private set
+  var connectionMessage by mutableStateOf("OFFLINE · no server connection")
+    private set
+
   private val commandHistory = mutableStateListOf<String>()
   private var historyIndex by mutableStateOf<Int?>(null)
   private var inputBeforeHistory by mutableStateOf("")
-  var coins by mutableStateOf(320)
-  var potions by mutableStateOf(3)
-  var route by mutableStateOf(0)
-  var location by mutableStateOf("Posto de exploração · Blumenau")
-  var activity by mutableStateOf("Nenhuma atividade em andamento")
-  val log = mutableStateListOf(
-    LogLine("09:42", "Chegaste ao posto de exploração."),
-    LogLine("09:38", "Consultaste o mapa da região."),
-    LogLine("09:31", "Recebeste 20 moedas por uma tarefa."),
-  )
 
-  fun run(raw: String) {
-    val command = raw.trim()
-    if (command.isEmpty()) return
-    rememberCommand(command)
-    val upper = command.uppercase()
-    when {
-      screen == Screen.MENU && upper in listOf("T", "TEMA") -> {
-        dark = !dark
-        add("Tema alterado para ${if (dark) "escuro" else "claro"}.")
+  fun receive(message: ServerMessage) {
+    when (message) {
+      is PresentationSnapshot -> {
+        document = message.document
+        connectionMessage = "CONNECTED · presentation revision ${document.revision.value}"
       }
-      upper in listOf("M", "MENU", "AJUDA") -> screen = Screen.MENU
-      upper in listOf("V", "VOLTAR", "JOGO", "ESC") -> screen = Screen.GAME
-      upper in listOf("I", "INVENTARIO", "INVENTÁRIO") -> screen = Screen.INVENTORY
-      upper in listOf("E", "EQUIPAMENTO", "EQUIPAMENTOS") -> screen = Screen.EQUIPMENT
-      upper in listOf("A", "ATIVIDADES", "STATUS") -> screen = Screen.ACTIVITIES
-      upper in listOf("D", "DESCOBERTAS", "OBJETOS", "L") -> screen = Screen.DISCOVERIES
-      upper in listOf("J", "JOGADORES") -> screen = Screen.PLAYERS
-      upper == "C" || upper.startsWith("ATACAR") || upper == "COMBATE" -> screen = Screen.COMBAT
-      upper == "N" || upper.startsWith("NEGOCIAR") || upper == "NEGOCIAÇÃO" -> screen = Screen.TRADE
-      upper == "VJ" || upper.startsWith("VIAJAR") || upper == "VIAGEM" -> screen = Screen.TRAVEL
-      upper.startsWith("IR") -> {
-        screen = Screen.ACTIVITIES
-        route = 0
-        activity = "Deslocamento · Saída para as ruínas (#12) · 0/3 trechos"
-        add("Iniciaste um deslocamento fictício para as ruínas.")
+      is PresentationPatch -> {
+        val updatedDocument = runCatching { document.applyPatch(message) }
+        updatedDocument.onSuccess {
+          document = it
+          connectionMessage = "CONNECTED · presentation revision ${document.revision.value}"
+        }.onFailure {
+          connectionMessage = "PRESENTATION OUT OF DATE · snapshot required"
+        }
       }
-      upper == "AVANÇAR" || upper == "AVANCAR" -> {
-        if (activity.startsWith("Deslocamento")) {
-          route = (route + 1).coerceAtMost(3)
-          if (route == 3) {
-            location = "Entrada das ruínas antigas"
-            activity = "Nenhuma atividade em andamento"
-            add("Chegaste à entrada das ruínas (demonstração local).")
-          } else activity = "Deslocamento · Saída para as ruínas (#12) · $route/3 trechos"
-          screen = Screen.ACTIVITIES
-        } else add("Não há atividade de demonstração para avançar.")
-      }
-      upper.startsWith("EXAMINAR") -> { screen = Screen.DISCOVERIES; add("Detalhes de demonstração para: ${command.substringAfter(' ', "objeto")}.") }
-      upper.startsWith("PEGAR") || upper.startsWith("COLETAR") -> {
-        coins += 1
-        screen = Screen.INVENTORY
-        add("Uma moeda fictícia foi adicionada ao inventário.")
-      }
-      upper.startsWith("USAR") -> {
-        if (potions > 0) potions--
-        screen = Screen.INVENTORY
-        add("Uso simulado localmente; nenhuma regra do servidor foi executada.")
-      }
-      else -> add("Comando não reconhecido: ‘$command’. Digite M para abrir o menu.")
+      is ServerRejected -> connectionMessage = "SERVER REJECTED · ${message.reason}"
+      is ServerFailed -> connectionMessage = "SERVER FAILED · ${message.error}"
+      is ServerProtocolError -> connectionMessage = "PROTOCOL ERROR · ${message.description}"
+      else -> Unit
     }
-    input = ""
   }
 
   fun updateInput(value: String) {
@@ -145,10 +122,23 @@ private class DemoSession {
     inputBeforeHistory = ""
   }
 
+  fun submitCommand(commandSink: (String) -> Unit) {
+    val command = input.trim()
+    if (command.isEmpty()) return
+
+    if (handleClientCommand(command)) {
+      input = ""
+      return
+    }
+
+    rememberCommand(command)
+    commandSink(command)
+    input = ""
+  }
+
   fun previousCommand(): Boolean {
     if (commandHistory.isEmpty()) return false
-
-    val nextIndex = historyIndex?.let { (it - 1).coerceAtLeast(0) } ?: run {
+    val nextIndex = historyIndex?.let { (it - 1).coerceAtLeast(0) } ?: kotlin.run {
       inputBeforeHistory = input
       commandHistory.lastIndex
     }
@@ -160,9 +150,8 @@ private class DemoSession {
   fun nextCommand(): Boolean {
     val currentIndex = historyIndex ?: return false
     if (currentIndex < commandHistory.lastIndex) {
-      val nextIndex = currentIndex + 1
-      historyIndex = nextIndex
-      input = commandHistory[nextIndex]
+      historyIndex = currentIndex + 1
+      input = commandHistory[currentIndex + 1]
     } else {
       historyIndex = null
       input = inputBeforeHistory
@@ -171,28 +160,44 @@ private class DemoSession {
     return true
   }
 
+  private fun handleClientCommand(command: String): Boolean {
+    return when (command.uppercase()) {
+      "M", "MENU" -> {
+        screen = ClientScreen.MENU
+        true
+      }
+      "V", "VOLTAR" -> {
+        screen = ClientScreen.PRESENTATION
+        true
+      }
+      "T", "TEMA" -> if (screen == ClientScreen.MENU) {
+        darkThemeEnabled = !darkThemeEnabled
+        true
+      } else false
+      else -> false
+    }
+  }
+
   private fun rememberCommand(command: String) {
     if (commandHistory.size == 20) commandHistory.removeAt(0)
     commandHistory.add(command)
     historyIndex = null
     inputBeforeHistory = ""
   }
-
-  private fun add(message: String) { log.add(0, LogLine("agora", message)) }
 }
 
 private val mono = FontFamily.Monospace
 
 fun main() = application {
   Window(onCloseRequest = ::exitApplication, title = "FL-RPG · terminal") {
-    val session = remember { DemoSession() }
-    val theme = if (session.dark) darkTheme else lightTheme
-    TerminalApp(session, theme)
+    val state = remember { ClientPresentationState() }
+    TerminalApp(state)
   }
 }
 
 @Composable
-private fun TerminalApp(session: DemoSession, theme: TerminalTheme) {
+private fun TerminalApp(state: ClientPresentationState) {
+  val theme = if (state.darkThemeEnabled) darkTheme else lightTheme
   Column(
     Modifier.fillMaxSize().background(theme.background).padding(horizontal = 18.dp, vertical = 12.dp),
     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -201,104 +206,131 @@ private fun TerminalApp(session: DemoSession, theme: TerminalTheme) {
       Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
           Text("FL-RPG", color = theme.accent, fontSize = 18.sp, fontFamily = mono, fontWeight = FontWeight.Bold)
-          Text("  ·  cliente textual  ·  sessão local", color = theme.muted, fontSize = 13.sp, fontFamily = mono)
+          Text("  ·  cliente textual", color = theme.muted, fontSize = 13.sp, fontFamily = mono)
           Spacer(Modifier.weight(1f))
-          Text("[ ${if (session.dark) "DARK" else "LIGHT"} ]  [ DEMO ]", color = theme.muted, fontSize = 12.sp, fontFamily = mono)
+          Text("[ ${if (state.darkThemeEnabled) "DARK" else "LIGHT"} ]", color = theme.muted, fontSize = 12.sp, fontFamily = mono)
         }
         Text("${"─".repeat(100)}", color = theme.border, fontSize = 12.sp, fontFamily = mono, maxLines = 1)
       }
     }
 
-    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-      TerminalTile(
-        title = "${session.location.uppercase()}  /  ${session.screen.label}",
-        theme = theme,
-        modifier = Modifier.weight(2.2f).fillMaxHeight(),
-      ) {
-        MainContent(session, theme)
-      }
-      Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        TerminalTile("PERSONAGEM", theme, Modifier.weight(1f)) {
-          SelectionContainer {
-            TextBlock(theme, "Viajante veterano\nNível 18 · 2.450 XP\nVida    [████████░░] 85/100\nMoedas  ${session.coins}\n\n${session.activity}")
-          }
-        }
-        TerminalTile("HISTÓRICO RECENTE", theme, Modifier.weight(1f)) {
-          Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            session.log.forEach { TextBlock(theme, "${it.time}  ${it.text}", small = true) }
-          }
-        }
-      }
+    if (state.isMenuOpen) {
+      MenuScreen(theme, Modifier.weight(1f).fillMaxWidth())
+    } else {
+      PresentationScreen(state.document, theme, Modifier.weight(1f).fillMaxWidth())
     }
 
     SelectionContainer {
-      Row(
-        Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Text(":", color = theme.accent, fontSize = 15.sp, fontFamily = mono)
-        Spacer(Modifier.width(8.dp))
-        BasicTextField(
-          value = session.input,
-          onValueChange = session::updateInput,
-          modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-            when (event.key) {
-              Key.DirectionUp -> session.previousCommand()
-              Key.DirectionDown -> session.nextCommand()
-              else -> false
-            }
-          }.onKeyEvent { event ->
-            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-              session.run(session.input)
-              true
-            } else false
-          }.focusable(),
-          singleLine = true,
-          textStyle = TextStyle(color = theme.foreground, fontFamily = mono, fontSize = 14.sp),
-          cursorBrush = androidx.compose.ui.graphics.SolidColor(theme.accent),
-          decorationBox = { inner ->
-            Box {
-              if (session.input.isEmpty()) Text("digite comando · M menu · Enter executar", color = theme.muted, fontFamily = mono, fontSize = 14.sp)
-              inner()
-            }
-          },
-        )
+      Text(state.connectionMessage, color = theme.muted, fontFamily = mono, fontSize = 12.sp)
+    }
+    CommandLine(state, theme)
+  }
+}
+
+@Composable
+private fun MenuScreen(theme: TerminalTheme, modifier: Modifier = Modifier) {
+  TerminalTile("MENU", theme, modifier) {
+    SelectionContainer {
+      TextBlock(
+        theme,
+        "[ T ] Alternar tema\n[ V ] Voltar à apresentação\n\nOs comandos do jogo são enviados ao servidor.\nOs atalhos e ações disponíveis são apresentados pelo documento recebido.",
+      )
+    }
+  }
+}
+
+@Composable
+private fun PresentationScreen(document: PresentationDocument, theme: TerminalTheme, modifier: Modifier = Modifier) {
+  val mainBlocks = document.blocks.filter { it.region == PresentationRegion.MAIN }
+  val sidebarBlocks = document.blocks.filter { it.region == PresentationRegion.SIDEBAR }
+  val historyBlocks = document.blocks.filter { it.region == PresentationRegion.HISTORY }
+
+  Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    PresentationRegionPane("MAIN", mainBlocks, theme, Modifier.weight(2.2f).fillMaxHeight())
+    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      PresentationRegionPane("SIDEBAR", sidebarBlocks, theme, Modifier.weight(1f))
+      PresentationRegionPane("HISTORY", historyBlocks, theme, Modifier.weight(1f))
+    }
+  }
+}
+
+@Composable
+private fun PresentationRegionPane(
+  label: String,
+  blocks: List<com.lucasalfare.flrpg.communicationprotocol.PresentationBlock>,
+  theme: TerminalTheme,
+  modifier: Modifier = Modifier,
+) {
+  TerminalTile(label, theme, modifier) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+      if (blocks.isEmpty()) {
+        TextBlock(theme, "No data received.", color = theme.muted, small = true)
+      } else {
+        blocks.forEach { block ->
+          block.title?.let { TextBlock(theme, it, color = theme.accent, heading = true) }
+          PresentationBlockContent(block.content, theme)
+        }
       }
     }
   }
 }
 
 @Composable
-private fun MainContent(session: DemoSession, theme: TerminalTheme) {
-  Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-    when (session.screen) {
-      Screen.MENU -> {
-        TextBlock(theme, "MENU DE JOGO", heading = true)
-        TextBlock(theme, "[ I ] Inventário       [ E ] Equipamentos\n[ A ] Atividades       [ D ] Descobertas\n[ J ] Jogadores        [ C ] Combate (demo)\n[ N ] Negociação (demo) [ VJ ] Viagem (demo)\n[ V ] Voltar ao jogo")
-        TextBlock(theme, "APARÊNCIA", heading = true)
-        TextBlock(theme, "[ T ] Alternar tema: ${if (session.dark) "escuro" else "claro"}\nPara mudar, digite T enquanto este menu estiver aberto.", color = theme.accent)
+private fun PresentationBlockContent(content: BlockContent, theme: TerminalTheme) {
+  when (content) {
+    is BlockContent.Text -> TextBlock(theme, content.text, color = colorFor(content.style, theme))
+    is BlockContent.ItemsList -> {
+      val prefix = if (content.isOrdered) "" else "- "
+      content.items.forEachIndexed { index, item ->
+        TextBlock(theme, if (content.isOrdered) "${index + 1}. $item" else "$prefix$item")
       }
-      Screen.GAME -> {
-        TextBlock(theme, "Posto de exploração", heading = true)
-        TextBlock(theme, "Localização atual · Blumenau\nHora do mundo · indisponível nesta demonstração")
-        TerminalTile("OBJETOS E PESSOAS POR PERTO", theme) {
-          TextBlock(theme, "#12  Saída para as ruínas antigas   · saída disponível\n#18  Comerciante                   · NPC\n#19  Terminal de viagens           · interagível\n#27  Nara                           · jogadora próxima\n#31  Moeda comum                    · visível, coletável")
-        }
-        TerminalTile("COMANDOS DE EXEMPLO", theme) {
-          TextBlock(theme, "M menu · I inventário · STATUS atividades · D descobertas\nIR #12 inicia deslocamento demo · AVANÇAR percorre trecho demo")
-        }
-        TextBlock(theme, "Dados fictícios para validar a organização da tela; sem conexão com o servidor.", theme.muted, small = true)
-      }
-      Screen.INVENTORY -> TextBlock(theme, "INVENTÁRIO\n\nITENS CARREGADOS\nPoção de cura             × ${session.potions}\nEspada curta              × 1\nMinério de ferro           × 8\nRelíquia antiga            × 2\nMoeda comum                × ${session.coins}\n\n‘USAR poção’ altera apenas esta demonstração.")
-      Screen.EQUIPMENT -> TextBlock(theme, "EQUIPAMENTOS\n\nArma       Espada de aço\nArmadura   Cota de malha\nAcessório  Anel de proteção\nEscudo     — (Escudo de madeira na mochila)\n\nSlots ilustrativos; a estrutura final acompanhará o domínio.")
-      Screen.ACTIVITIES -> TextBlock(theme, "ATIVIDADE PRINCIPAL\n\n${session.activity}\n${if (session.route > 0) "\n${"■".repeat(session.route)}${"□".repeat(3 - session.route)}  ${session.route}/3 trechos\nDigite AVANÇAR para simular o próximo trecho." else ""}\n\nConsultar status não avança o tempo do mundo.", theme.foreground)
-      Screen.DISCOVERIES -> TextBlock(theme, "OBJETOS DISPONÍVEIS\n\n#12  Saída para as ruínas antigas\n#18  Comerciante\n#19  Terminal de viagens\n#31  Moeda comum · visível · coletável\n\nExistência, percepção e possibilidade de interação são informações distintas.")
-      Screen.PLAYERS -> TextBlock(theme, "JOGADORES PRÓXIMOS\n\n#27  Nara · junto à banca · visível\n\nEstado fictício local. Ações pessoais não são eventos globais.")
-      Screen.COMBAT -> TextBlock(theme, "ENCONTRO · Esqueleto errante #42\n\nINIMIGO  [██████░░░░] 60/60\nVOCÊ     [████████░░] 85/100\nArma: Espada de aço · Armadura: Cota de malha\n\nATACAR #42 · DEFENDER · USAR poção · FUGIR\nNenhum dano ou resultado real é calculado aqui.")
-      Screen.TRADE -> TextBlock(theme, "NEGOCIAÇÃO · Comerciante #18\n\nDisponível: Escudo de madeira · Poção de cura\nRecursos: ${session.coins} moedas · 8 minérios\nProposta atual: nenhuma\n\nApresentação simulada; sem preço ou aceitação implementados.")
-      Screen.TRAVEL -> TextBlock(theme, "TERMINAL DE VIAGENS #19\n\nDestino de exemplo: Florianópolis\nDuração estimada: 3 horas (fictícia)\n\nConclusões reais deverão vir da autoridade do jogo.")
     }
+    is BlockContent.Choices -> content.choices.forEach { choice ->
+      val shortcut = choice.shortcut?.let { "[$it] " } ?: ""
+      val state = if (choice.enabled) "" else " (unavailable)"
+      TextBlock(theme, "$shortcut${choice.text}$state", color = if (choice.enabled) theme.foreground else theme.muted)
+    }
+    is BlockContent.Feed -> {
+      val items = if (content.ordering == FeedOrdering.REVERSE_CHRONOLOGICAL) content.items.reversed() else content.items
+      items.forEach { item -> TextBlock(theme, item.text, color = colorFor(item.style, theme), small = true) }
+    }
+  }
+}
+
+@Composable
+private fun CommandLine(state: ClientPresentationState, theme: TerminalTheme) {
+  Row(
+    Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(":", color = theme.accent, fontSize = 15.sp, fontFamily = mono)
+    Spacer(Modifier.width(8.dp))
+    BasicTextField(
+      value = state.input,
+      onValueChange = state::updateInput,
+      modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (event.key) {
+          Key.DirectionUp -> state.previousCommand()
+          Key.DirectionDown -> state.nextCommand()
+          else -> false
+        }
+      }.onKeyEvent { event ->
+        if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+          state.submitCommand { }
+          true
+        } else false
+      }.focusable(),
+      singleLine = true,
+      textStyle = TextStyle(color = theme.foreground, fontFamily = mono, fontSize = 14.sp),
+      cursorBrush = SolidColor(theme.accent),
+      decorationBox = { inner ->
+        Box {
+          if (state.input.isEmpty()) Text("type a command · M menu · Enter send", color = theme.muted, fontFamily = mono, fontSize = 14.sp)
+          inner()
+        }
+      },
+    )
   }
 }
 
@@ -309,16 +341,11 @@ private fun TerminalTile(
   modifier: Modifier = Modifier,
   content: @Composable () -> Unit,
 ) {
-  Column(
-    modifier.border(1.dp, theme.border).padding(horizontal = 10.dp, vertical = 8.dp),
-    verticalArrangement = Arrangement.spacedBy(7.dp),
-  ) {
+  Column(modifier.border(1.dp, theme.border).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
     SelectionContainer {
       Text("┌─ $title", color = theme.accent, fontFamily = mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
-    SelectionContainer {
-      Box(Modifier.fillMaxWidth().weight(1f, fill = false)) { content() }
-    }
+    Box(Modifier.fillMaxWidth().weight(1f, fill = false)) { content() }
   }
 }
 
@@ -334,8 +361,17 @@ private fun TextBlock(
     text = text,
     color = color,
     fontFamily = mono,
-    fontSize = when { small -> 12.sp; heading -> 19.sp; else -> 14.sp },
+    fontSize = when { small -> 12.sp; heading -> 16.sp; else -> 14.sp },
     fontWeight = if (heading) FontWeight.Bold else FontWeight.Normal,
     lineHeight = if (small) 17.sp else 22.sp,
   )
+}
+
+private fun colorFor(style: ProtocolTextStyle, theme: TerminalTheme): Color = when (style) {
+  ProtocolTextStyle.NORMAL -> theme.foreground
+  ProtocolTextStyle.HEADER, ProtocolTextStyle.HIGHLIGHT -> theme.accent
+  ProtocolTextStyle.SUBHEADER -> theme.foreground
+  ProtocolTextStyle.MUTED -> theme.muted
+  ProtocolTextStyle.WARNING -> Color(0xFFFFC857)
+  ProtocolTextStyle.ERROR -> Color(0xFFE96B6B)
 }
