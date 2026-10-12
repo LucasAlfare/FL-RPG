@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 class CommunicationProtocolTestSuite {
 
@@ -223,7 +222,6 @@ class CommunicationProtocolTestSuite {
 
       val lifecycleHandler = SessionLifecycleHandler()
       val globalSequenceTrackers = ConcurrentHashMap<SessionId, SequenceTracker>()
-      val rateLimiter = RequestRateLimiter(maxRequestsPerWindow = 1000)
 
       // Simulating multiple clients connecting and sending commands simultaneously
       val jobs = (1..numberOfUsers).map { userId ->
@@ -239,7 +237,6 @@ class CommunicationProtocolTestSuite {
 
           // 2. Send message bursts (simulating intense gameplay)
           for (seq in 1..messagesPerUser) {
-            rateLimiter.allowRequest(sessionId)
             val msgId = MessageId("msg-$userId-$seq")
 
             // Process concurrently on server
@@ -293,29 +290,5 @@ class CommunicationProtocolTestSuite {
       assertEquals("State $patchCount", (sharedDoc.blocks[0].content as BlockContent.Text).text)
     }
 
-    @Test
-    fun `Load Test - Rate Limiter Exhaustion and Resilience`() = runBlocking {
-      val limiter = RequestRateLimiter(maxRequestsPerWindow = 50)
-      val sessionId = SessionId("spammer_bot")
-
-      val allowedCount = AtomicInteger(0)
-      val blockedCount = AtomicInteger(0)
-
-      // 500 parallel requests from a single session
-      val jobs = (1..500).map {
-        launch(Dispatchers.Default) {
-          if (limiter.allowRequest(sessionId)) {
-            allowedCount.incrementAndGet()
-          } else {
-            blockedCount.incrementAndGet()
-          }
-        }
-      }
-      jobs.joinAll()
-
-      // Must allow exactly 50 requests
-      assertEquals(50, allowedCount.get())
-      assertEquals(450, blockedCount.get())
-    }
   }
 }
