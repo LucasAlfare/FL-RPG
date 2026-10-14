@@ -1,3 +1,4 @@
+// TOTALMENTE temporário com dados fake.
 package com.lucasalfare.flrpg.client
 
 import androidx.compose.foundation.background
@@ -20,10 +21,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,17 +46,142 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.lucasalfare.flrpg.communicationprotocol.BlockContent
+import com.lucasalfare.flrpg.communicationprotocol.ClientAction
+import com.lucasalfare.flrpg.communicationprotocol.ClientHello
+import com.lucasalfare.flrpg.communicationprotocol.CorrelationId
 import com.lucasalfare.flrpg.communicationprotocol.FeedOrdering
+import com.lucasalfare.flrpg.communicationprotocol.MessageId
+import com.lucasalfare.flrpg.communicationprotocol.MessageMetadata
 import com.lucasalfare.flrpg.communicationprotocol.PresentationDocument
 import com.lucasalfare.flrpg.communicationprotocol.PresentationPatch
 import com.lucasalfare.flrpg.communicationprotocol.PresentationRegion
 import com.lucasalfare.flrpg.communicationprotocol.PresentationSnapshot
+import com.lucasalfare.flrpg.communicationprotocol.ProtocolMessage
+import com.lucasalfare.flrpg.communicationprotocol.ServerCompleted
 import com.lucasalfare.flrpg.communicationprotocol.ServerFailed
 import com.lucasalfare.flrpg.communicationprotocol.ServerMessage
 import com.lucasalfare.flrpg.communicationprotocol.ServerProtocolError
+import com.lucasalfare.flrpg.communicationprotocol.ServerReject
 import com.lucasalfare.flrpg.communicationprotocol.ServerRejected
+import com.lucasalfare.flrpg.communicationprotocol.ServerWelcome
+import com.lucasalfare.flrpg.communicationprotocol.SessionId
 import com.lucasalfare.flrpg.communicationprotocol.TextStyle as ProtocolTextStyle
 import com.lucasalfare.flrpg.communicationprotocol.applyPatch
+import com.lucasalfare.flrpg.communicationprotocol.toJson
+import com.lucasalfare.flrpg.communicationprotocol.toProtocolMessage
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.websocket.Frame
+import io.ktor.websocket.readText
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import java.util.UUID
+import com.lucasalfare.flrpg.communicationprotocol.Sequence
+import com.lucasalfare.flrpg.communicationprotocol.Sequence.Companion.ZERO
+
+class ClientConnection(
+  private val state: ClientPresentationState, private val serverUrl: String = "ws://localhost:8080/game"
+) {
+  private val client = HttpClient(CIO) {
+    install(WebSockets)
+  }
+
+  private var sessionId: SessionId = SessionId(UUID.randomUUID().toString())
+
+  private var nextSequence: Sequence = ZERO
+  private var handshakeDone = false
+
+  private var job: Job? = null
+  private var session: DefaultClientWebSocketSession? = null
+
+  fun connect(scope: CoroutineScope) {
+    if (job?.isActive == true) return
+
+    job = scope.launch {
+      try {
+        state.connectionMessage = "CONNECTING…"
+        client.webSocket(serverUrl) {
+          session = this
+          performHandshake()
+          for (frame in incoming) {
+            if (frame is Frame.Text) {
+              val message = frame.readText().toProtocolMessage<ProtocolMessage>()
+              if (message is ServerMessage) {
+                receiveFromNetwork(message)
+              }
+            }
+          }
+        }
+      } catch (e: Exception) {
+        state.connectionMessage = "CONNECTION FAILED · ${e.message}"
+      } finally {
+        session = null
+        state.connectionMessage = "OFFLINE · no server connection"
+      }
+    }
+  }
+
+  private suspend fun DefaultClientWebSocketSession.performHandshake() {
+    val hello = ClientHello(metadata = nextMetadata())
+    send(Frame.Text(hello.toJson()))
+  }
+
+  fun sendAction(actionId: String, parameters: Map<String, String> = emptyMap()) {
+    val currentSession = session
+    if (currentSession == null || !handshakeDone) {
+      state.connectionMessage = "NOT READY · handshake pending"
+      return
+    }
+
+    val action = ClientAction(
+      metadata = nextMetadata(), actionId = actionId, parameters = parameters
+    )
+
+    state.connectionMessage = "SENDING · $actionId (seq ${action.sequence.value})"
+
+    currentSession.launch {
+      try {
+        currentSession.send(Frame.Text(action.toJson()))
+      } catch (e: Exception) {
+        state.connectionMessage = "SEND FAILED · ${e.message}"
+      }
+    }
+  }
+
+  fun receiveFromNetwork(message: ServerMessage) {
+    when (message) {
+      is ServerWelcome -> {
+        nextSequence = ZERO
+        handshakeDone = true
+        state.receive(message)
+      }
+
+      else -> state.receive(message)
+    }
+  }
+
+  private fun nextMetadata(
+    correlationId: CorrelationId? = null
+  ): MessageMetadata {
+    val metadata = MessageMetadata(
+      messageId = MessageId(UUID.randomUUID().toString()),
+      sessionId = sessionId,
+      sequence = nextSequence,
+      correlationId = correlationId
+    )
+    nextSequence = nextSequence.next()
+    return metadata
+  }
+
+  fun close() {
+    job?.cancel()
+    client.close()
+  }
+}
 
 private data class TerminalTheme(
   val background: Color,
@@ -64,12 +192,18 @@ private data class TerminalTheme(
 )
 
 private val darkTheme = TerminalTheme(
-  background = Color(0xFF111318), foreground = Color(0xFFD7DCE5),
-  muted = Color(0xFF778195), accent = Color(0xFF80C8A0), border = Color(0xFF394252),
+  background = Color(0xFF111318),
+  foreground = Color(0xFFD7DCE5),
+  muted = Color(0xFF778195),
+  accent = Color(0xFF80C8A0),
+  border = Color(0xFF394252),
 )
 private val lightTheme = TerminalTheme(
-  background = Color(0xFFF4F3EE), foreground = Color(0xFF282B32),
-  muted = Color(0xFF74777D), accent = Color(0xFF356C53), border = Color(0xFFB9B8B0),
+  background = Color(0xFFF4F3EE),
+  foreground = Color(0xFF282B32),
+  muted = Color(0xFF74777D),
+  accent = Color(0xFF356C53),
+  border = Color(0xFFB9B8B0),
 )
 
 private enum class ClientScreen { PRESENTATION, MENU }
@@ -88,7 +222,6 @@ class ClientPresentationState {
   var input by mutableStateOf("")
     private set
   var connectionMessage by mutableStateOf("OFFLINE · no server connection")
-    private set
 
   private val commandHistory = mutableStateListOf<String>()
   private var historyIndex by mutableStateOf<Int?>(null)
@@ -96,6 +229,23 @@ class ClientPresentationState {
 
   fun receive(message: ServerMessage) {
     when (message) {
+      is ServerWelcome -> {
+        connectionMessage = if (message.isResumed) {
+          "CONNECTED · session resumed"
+        } else {
+          "CONNECTED · session established"
+        }
+      }
+
+      is ServerReject -> {
+        connectionMessage = "REJECTED · ${message.reason}"
+      }
+
+      is ServerCompleted -> {
+        val factsSummary = message.facts.joinToString { it.name }
+        connectionMessage = "COMPLETED · facts: $factsSummary"
+      }
+
       is PresentationSnapshot -> {
         document = message.document
         connectionMessage = "CONNECTED · presentation revision ${document.revision.value}"
@@ -196,12 +346,31 @@ private val mono = FontFamily.Monospace
 fun main() = application {
   Window(onCloseRequest = ::exitApplication, title = "FL-RPG · terminal") {
     val state = remember { ClientPresentationState() }
-    TerminalApp(state)
+    val scope = rememberCoroutineScope()
+    val connection = remember { ClientConnection(state) }
+
+    // Conecta automaticamente ao iniciar (pode ser movido para um comando depois)
+    LaunchedEffect(Unit) {
+      connection.connect(scope)
+    }
+
+    TerminalApp(state, onCommand = { text ->
+      // Mapeamento mínimo e temporário só para a primeira ação
+      when (text.lowercase()) {
+        "enter", "enter_world" -> connection.sendAction("enter_world")
+        else -> {
+          // Por enquanto só registra; ClientTextCommand ainda não é processado pelo servidor
+          state.connectionMessage = "COMMAND NOT MAPPED · $text"
+        }
+      }
+    })
   }
 }
 
 @Composable
-private fun TerminalApp(state: ClientPresentationState) {
+private fun TerminalApp(
+  state: ClientPresentationState, onCommand: (String) -> Unit
+) {
   val theme = if (state.darkThemeEnabled) darkTheme else lightTheme
   Column(
     Modifier.fillMaxSize().background(theme.background).padding(horizontal = 18.dp, vertical = 12.dp),
@@ -220,7 +389,7 @@ private fun TerminalApp(state: ClientPresentationState) {
             fontFamily = mono
           )
         }
-        Text("${"─".repeat(100)}", color = theme.border, fontSize = 12.sp, fontFamily = mono, maxLines = 1)
+        Text("─".repeat(100), color = theme.border, fontSize = 12.sp, fontFamily = mono, maxLines = 1)
       }
     }
 
@@ -233,10 +402,11 @@ private fun TerminalApp(state: ClientPresentationState) {
     SelectionContainer {
       Text(state.connectionMessage, color = theme.muted, fontFamily = mono, fontSize = 12.sp)
     }
-    CommandLine(state, theme)
+    CommandLine(state, theme, onCommand)
   }
 }
 
+// vai ter coisas do MENU que são somente do lado do client e coisas que de Menu que devem vir do servidor? Eita!
 @Composable
 private fun MenuScreen(theme: TerminalTheme, modifier: Modifier = Modifier) {
   TerminalTile("MENU", theme, modifier) {
@@ -313,7 +483,9 @@ private fun PresentationBlockContent(content: BlockContent, theme: TerminalTheme
 }
 
 @Composable
-private fun CommandLine(state: ClientPresentationState, theme: TerminalTheme) {
+private fun CommandLine(
+  state: ClientPresentationState, theme: TerminalTheme, onCommand: (String) -> Unit
+) {
   Row(
     Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
@@ -332,7 +504,7 @@ private fun CommandLine(state: ClientPresentationState, theme: TerminalTheme) {
         }
       }.onKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-          state.submitCommand { }
+          state.submitCommand(onCommand)
           true
         } else false
       }.focusable(),
@@ -351,6 +523,7 @@ private fun CommandLine(state: ClientPresentationState, theme: TerminalTheme) {
   }
 }
 
+// quero que os Tiles sejam modulares, ou seja, ocultar ou mostrar mais tiles vão ajustando a grande principal automaticamente, de preferência com "animação" fluida de quando isso acontecer
 @Composable
 private fun TerminalTile(
   title: String,

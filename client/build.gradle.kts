@@ -12,10 +12,16 @@ repositories {
   mavenCentral()
 }
 
+val ktorVersion = "3.6.0"
+
 dependencies {
   implementation(project(":communication-protocol"))
   implementation(compose.desktop.currentOs)
   implementation("org.jetbrains.compose.material3:material3:1.10.0-alpha05")
+
+  implementation("io.ktor:ktor-client-core:${ktorVersion}")
+  implementation("io.ktor:ktor-client-cio:${ktorVersion}")
+  implementation("io.ktor:ktor-client-websockets:${ktorVersion}")
 
   testImplementation(kotlin("test"))
 }

@@ -1,5 +1,6 @@
 plugins {
   kotlin("jvm") version "2.3.0"
+  application
 }
 
 group = "com.lucasalfare"
@@ -26,6 +27,10 @@ dependencies {
 
 kotlin {
   jvmToolchain(25)
+}
+
+application {
+  mainClass.set("com.lucasalfare.flrpg.server.MainKt")   // ajuste se o nome for diferente
 }
 
 tasks.test {
