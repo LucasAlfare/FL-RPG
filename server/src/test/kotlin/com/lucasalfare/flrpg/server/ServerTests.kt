@@ -4,6 +4,7 @@ import com.lucasalfare.flrpg.communicationprotocol.*
 import com.lucasalfare.flrpg.gamedomain.CharacterId
 import com.lucasalfare.flrpg.gamedomain.Interaction
 import com.lucasalfare.flrpg.gamedomain.InteractionId
+import kotlinx.coroutines.runBlocking
 import java.util.*
 import kotlin.test.*
 
@@ -12,10 +13,45 @@ private class InMemoryConnection(
   override var sessionId: SessionId? = null,
   override var characterId: CharacterId? = null
 ) : Connection {
-  override suspend fun send(message: ServerMessage) {}
-  override suspend fun receive(): ClientMessage? = null
-  override suspend fun close() {}
+  private val incoming = mutableListOf<ClientMessage>()
+  val sentMessages = mutableListOf<ServerMessage>()
+  var closed = false
+    private set
+
+  fun enqueue(vararg messages: ClientMessage) {
+    incoming.addAll(messages)
+  }
+
+  override suspend fun send(message: ServerMessage) {
+    sentMessages.add(message)
+  }
+
+  override suspend fun receive(): ClientMessage? = if (incoming.isEmpty()) null else incoming.removeAt(0)
+
+  override suspend fun close() {
+    closed = true
+  }
 }
+
+private fun clientHello(
+  messageId: String,
+  sessionId: SessionId,
+  sequence: Sequence,
+  version: ProtocolVersion = ProtocolVersion.V1,
+  resumeSessionId: SessionId? = null
+): ClientHello = ClientHello(
+  metadata = MessageMetadata(
+    messageId = MessageId(messageId), sessionId = sessionId, sequence = sequence, version = version
+  ), resumeSessionId = resumeSessionId
+)
+
+private fun clientAction(
+  messageId: String, sessionId: SessionId, sequence: Sequence, actionId: String = "test_action"
+): ClientAction = ClientAction(
+  metadata = MessageMetadata(
+    messageId = MessageId(messageId), sessionId = sessionId, sequence = sequence
+  ), actionId = actionId
+)
 
 class ServerTests {
 
@@ -209,5 +245,183 @@ class ServerTests {
     assertTrue(prepared.choices.all { it.enabled })
 
     assertEquals(Revision(1L), prepared.document.revision)
+  }
+
+  @Test
+  fun handleConnection_establishesSessionOnValidHello() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+    connection.enqueue(clientHello("hello-1", sessionId, Sequence.ZERO))
+
+    handleConnection(connection = connection, registry = registry)
+
+    assertEquals(1, connection.sentMessages.size)
+    val welcome = connection.sentMessages.single()
+    assertTrue(welcome is ServerWelcome)
+    assertEquals(sessionId, welcome.metadata.sessionId)
+    assertFalse((welcome as ServerWelcome).isResumed)
+    assertTrue(connection.closed)
+  }
+
+  @Test
+  fun handleConnection_rejectsInvalidHello() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO, version = ProtocolVersion(2, 0))
+    )
+
+    handleConnection(connection = connection, registry = registry)
+
+    assertEquals(1, connection.sentMessages.size)
+    val response = connection.sentMessages.single()
+    assertTrue(response is ServerReject)
+    assertEquals(RejectionReason.INCOMPATIBLE_VERSION, (response as ServerReject).reason)
+    assertNull(registry.findById("conn-1"))
+  }
+
+  @Test
+  fun handleConnection_rejectsRepeatedHelloAfterSessionEstablished() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO), clientHello("hello-2", sessionId, Sequence(1))
+    )
+
+    handleConnection(connection = connection, registry = registry)
+
+    assertEquals(1, connection.sentMessages.size)
+    assertTrue(connection.sentMessages.single() is ServerWelcome)
+  }
+
+  @Test
+  fun handleConnection_ignoresMessagesWithWrongSessionId() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+    val wrongSessionId = SessionId("session-other")
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO), clientAction("action-1", wrongSessionId, Sequence.ZERO)
+    )
+
+    handleConnection(connection = connection, registry = registry)
+
+    assertEquals(1, connection.sentMessages.size)
+    assertTrue(connection.sentMessages.single() is ServerWelcome)
+  }
+
+  @Test
+  fun handleConnection_cleansStateAfterDisconnect() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val pendingRegistry = SessionPendingRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    val interaction = Interaction(
+      id = InteractionId("enter_world"), label = "Enter the world", actionName = "enter_world"
+    )
+    offerRegistry.getOrCreate(sessionId).replaceOffers(
+      listOf(OfferedOption("opt_enter_world", interaction)), Revision(1L)
+    )
+    pendingRegistry.set(sessionId, PendingInteraction(interaction = interaction))
+
+    connection.enqueue(clientHello("hello-1", sessionId, Sequence.ZERO))
+
+    handleConnection(
+      connection = connection, registry = registry, offerRegistry = offerRegistry, pendingRegistry = pendingRegistry
+    )
+
+    assertTrue(connection.closed)
+    assertNull(registry.findById("conn-1"))
+    assertTrue(registry.activeConnections().isEmpty())
+    assertNull(offerRegistry.find(sessionId))
+    assertNull(pendingRegistry.find(sessionId))
+    assertNull(connection.sessionId)
+    assertNull(connection.characterId)
+  }
+
+  @Test
+  fun handleConnection_doesNotConfuseConnectionIdAndSessionId() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "connection-xyz")
+    val sessionId = SessionId("session-abc")
+    connection.enqueue(clientHello("hello-1", sessionId, Sequence.ZERO))
+
+    handleConnection(connection = connection, registry = registry)
+
+    val welcome = connection.sentMessages.single() as ServerWelcome
+    assertEquals(sessionId, welcome.metadata.sessionId)
+    assertNotEquals(SessionId(connection.id), welcome.metadata.sessionId)
+    assertEquals("connection-xyz", connection.id)
+  }
+
+  @Test
+  fun handleConnection_ignoresDuplicateMessages() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+    val duplicateMessageId = MessageId("action-dup")
+    val firstAction = ClientAction(
+      metadata = MessageMetadata(
+        messageId = duplicateMessageId, sessionId = sessionId, sequence = Sequence.ZERO
+      ), actionId = "test_action"
+    )
+    val duplicateAction = ClientAction(
+      metadata = MessageMetadata(
+        messageId = duplicateMessageId, sessionId = sessionId, sequence = Sequence(1)
+      ), actionId = "test_action"
+    )
+    val followUpAction = clientAction("action-2", sessionId, Sequence(1))
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO), firstAction, duplicateAction, followUpAction
+    )
+
+    handleConnection(connection = connection, registry = registry)
+
+    assertEquals(1, connection.sentMessages.size)
+    assertTrue(connection.sentMessages.single() is ServerWelcome)
+  }
+
+  @Test
+  fun handleConnection_ignoresOutOfOrderMessages() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+    val staleAction = clientAction("action-stale", sessionId, Sequence(1))
+    val outOfOrderAction = clientAction("action-forward", sessionId, Sequence(5))
+    val expectedAction = clientAction("action-expected", sessionId, Sequence.ZERO)
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO), staleAction, outOfOrderAction, expectedAction
+    )
+
+    handleConnection(connection = connection, registry = registry)
+
+    assertEquals(1, connection.sentMessages.size)
+    assertTrue(connection.sentMessages.single() is ServerWelcome)
+  }
+
+  @Test
+  fun handleConnection_doesNotExecuteActionAfterSequenceGap() = runBlocking {
+    val registry = ConnectionRegistry()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+    val gapAction = clientAction("action-gap", sessionId, Sequence(7))
+    val followingAction = clientAction("action-next", sessionId, Sequence.ZERO)
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO), gapAction, followingAction
+    )
+
+    handleConnection(connection = connection, registry = registry)
+
+    assertEquals(1, connection.sentMessages.size)
+    assertTrue(connection.sentMessages.single() is ServerWelcome)
+    assertTrue(connection.closed)
   }
 }
