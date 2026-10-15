@@ -96,6 +96,37 @@ data class GameFact(
   val name: String, val arguments: Map<String, Any?> = emptyMap()
 )
 
+@JvmInline
+value class InteractionId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "InteractionId must not be blank." }
+  }
+}
+
+data class Interaction(
+  val id: InteractionId,
+  val label: String,
+  val actionName: String? = null,
+  val fixedArguments: Map<String, Any?> = emptyMap(),
+  val requiredArgumentNames: List<String> = emptyList()
+) {
+  init {
+    require(label.isNotBlank()) { "Interaction label must not be blank." }
+    require(actionName == null || actionName.isNotBlank()) {
+      "Action name must not be blank when present."
+    }
+    require(requiredArgumentNames.all { it.isNotBlank() }) {
+      "Required argument names must not be blank."
+    }
+  }
+
+  val needsAdditionalArguments: Boolean
+    get() = requiredArgumentNames.isNotEmpty()
+
+  val isImmediate: Boolean
+    get() = requiredArgumentNames.isEmpty()
+}
+
 sealed interface GameActionResult {
   val facts: List<GameFact>
 
@@ -240,8 +271,7 @@ class MoveHandler : GameActionHandler {
 }
 
 class GameActionProcessor(
-  val nucleus: Nucleus,
-  handlers: List<GameActionHandler> = defaultHandlers()
+  val nucleus: Nucleus, handlers: List<GameActionHandler> = defaultHandlers()
 ) {
   private val handlerRegistry: Map<String, GameActionHandler> = buildMap {
     for (handler in handlers) {
@@ -254,8 +284,7 @@ class GameActionProcessor(
 
   companion object {
     fun defaultHandlers(): List<GameActionHandler> = listOf(
-      EnterWorldHandler(),
-      MoveHandler()
+      EnterWorldHandler(), MoveHandler()
     )
   }
 
