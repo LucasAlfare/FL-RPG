@@ -725,15 +725,26 @@ suspend fun handleConnection(
   } catch (_: Exception) {
     // Connection failures terminate this connection.
   } finally {
+    val sessionId = connection.sessionId
+    val characterId = connection.characterId
+
     runCatching {
       connection.close()
     }
 
-    connection.sessionId?.let {
+    sessionId?.let {
       offerRegistry.remove(it)
       pendingRegistry.remove(it)
     }
+
     registry.unregister(connection.id)
+
+    if (characterId != null) {
+      actionProcessor?.nucleus?.unregisterCharacter(characterId)
+    }
+
+    connection.characterId = null
+    connection.sessionId = null
   }
 }
 

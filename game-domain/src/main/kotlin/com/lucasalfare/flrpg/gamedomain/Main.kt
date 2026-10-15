@@ -34,6 +34,7 @@ class Nucleus(
 
   fun unregisterCharacter(characterId: CharacterId) {
     synchronized(stateLock) {
+      world.removeEntity(WorldEntityId(characterId.value))
       _characters.remove(characterId)
     }
   }
