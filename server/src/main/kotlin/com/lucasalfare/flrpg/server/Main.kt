@@ -136,6 +136,105 @@ suspend fun advanceTimeAndDistribute(
   return audiences.map { it.fact }
 }
 
+fun interface ShortcutAssigner {
+  fun assign(choices: List<Choice>): List<Choice>
+}
+
+class SequentialLetterShortcutAssigner : ShortcutAssigner {
+
+  override fun assign(choices: List<Choice>): List<Choice> {
+    if (choices.isEmpty()) return choices
+
+    val used = mutableSetOf<String>()
+    for (choice in choices) {
+      val existing = choice.shortcut
+      if (existing != null && choice.enabled) {
+        require(used.add(existing)) {
+          "Conflicting shortcut '$existing' among simultaneously selectable choices."
+        }
+      }
+    }
+
+    var nextIndex = 0
+    return choices.map { choice ->
+      if (choice.shortcut != null) {
+        choice
+      } else {
+        val shortcut = nextAvailable(used, nextIndex)
+        nextIndex = shortcut.second
+        used.add(shortcut.first)
+        choice.copy(shortcut = shortcut.first)
+      }
+    }.also { result ->
+      validateNoConflicts(result)
+    }
+  }
+
+  private fun nextAvailable(used: Set<String>, startIndex: Int): Pair<String, Int> {
+    var index = startIndex
+    while (true) {
+      val candidate = indexToShortcut(index)
+      if (candidate !in used) {
+        return candidate to (index + 1)
+      }
+      index++
+    }
+  }
+
+  private fun indexToShortcut(index: Int): String {
+    require(index >= 0)
+    var n = index
+    val chars = mutableListOf<Char>()
+    do {
+      chars.add('A' + (n % 26))
+      n = n / 26 - 1
+    } while (n >= 0)
+    return chars.reversed().joinToString("")
+  }
+
+  private fun validateNoConflicts(choices: List<Choice>) {
+    val seen = mutableSetOf<String>()
+    for (choice in choices) {
+      val s = choice.shortcut
+      if (s != null && choice.enabled) {
+        require(seen.add(s)) {
+          "Conflicting shortcut '$s' among simultaneously selectable choices."
+        }
+      }
+    }
+  }
+}
+
+class FixedShortcutAssigner(
+  private val shortcutsByChoiceId: Map<String, String>
+) : ShortcutAssigner {
+
+  override fun assign(choices: List<Choice>): List<Choice> {
+    val result = choices.map { choice ->
+      val mapped = shortcutsByChoiceId[choice.id]
+      if (mapped != null) {
+        choice.copy(shortcut = mapped)
+      } else {
+        choice
+      }
+    }
+    validateNoConflicts(result)
+    return result
+  }
+
+  private fun validateNoConflicts(choices: List<Choice>) {
+    val seen = mutableSetOf<String>()
+    for (choice in choices) {
+      val s = choice.shortcut
+      if (s != null && choice.enabled) {
+        require(seen.add(s)) {
+          "Conflicting shortcut '$s' among simultaneously selectable choices."
+        }
+      }
+    }
+  }
+}
+
 suspend fun handleConnection(
   connection: Connection,
   registry: ConnectionRegistry,
