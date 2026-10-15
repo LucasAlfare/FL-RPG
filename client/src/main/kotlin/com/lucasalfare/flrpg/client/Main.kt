@@ -50,7 +50,7 @@ class ClientConnection(
 
     job = scope.launch {
       try {
-        state.connectionMessage = "CONNECTING…"
+        state.connectionMessage = "A LIGAR..."
         client.webSocket(serverUrl) {
           session = this
           performHandshake()
@@ -64,10 +64,10 @@ class ClientConnection(
           }
         }
       } catch (e: Exception) {
-        state.connectionMessage = "CONNECTION FAILED · ${e.message}"
+        state.connectionMessage = "FALHA NA LIGAÇÃO · ${e.message}"
       } finally {
         session = null
-        state.connectionMessage = "OFFLINE · no server connection"
+        state.connectionMessage = "OFFLINE · sem ligação ao servidor"
       }
     }
   }
@@ -77,24 +77,46 @@ class ClientConnection(
     send(Frame.Text(hello.toJson()))
   }
 
-  fun sendAction(actionId: String, parameters: Map<String, String> = emptyMap()) {
+  fun sendSelection(choiceId: String) {
     val currentSession = session
     if (currentSession == null || !handshakeDone) {
-      state.connectionMessage = "NOT READY · handshake pending"
+      state.connectionMessage = "NÃO PRONTO · handshake pendente"
       return
     }
 
-    val action = ClientAction(
-      metadata = nextMetadata(), actionId = actionId, parameters = parameters
+    val selection = ClientSelection(
+      metadata = nextMetadata(), choiceId = choiceId
     )
 
-    state.connectionMessage = "SENDING · $actionId (seq ${action.sequence.value})"
+    state.connectionMessage = "A ENVIAR SELEÇÃO · $choiceId (seq ${selection.sequence.value})"
 
     currentSession.launch {
       try {
-        currentSession.send(Frame.Text(action.toJson()))
+        currentSession.send(Frame.Text(selection.toJson()))
       } catch (e: Exception) {
-        state.connectionMessage = "SEND FAILED · ${e.message}"
+        state.connectionMessage = "FALHA NO ENVIO · ${e.message}"
+      }
+    }
+  }
+
+  fun sendTextCommand(rawText: String) {
+    val currentSession = session
+    if (currentSession == null || !handshakeDone) {
+      state.connectionMessage = "NÃO PRONTO · handshake pendente"
+      return
+    }
+
+    val textCommand = ClientTextCommand(
+      metadata = nextMetadata(), rawText = rawText
+    )
+
+    state.connectionMessage = "A ENVIAR COMANDO · $rawText (seq ${textCommand.sequence.value})"
+
+    currentSession.launch {
+      try {
+        currentSession.send(Frame.Text(textCommand.toJson()))
+      } catch (e: Exception) {
+        state.connectionMessage = "FALHA NO ENVIO · ${e.message}"
       }
     }
   }
@@ -155,10 +177,6 @@ private val lightTheme = TerminalTheme(
 
 private enum class ClientScreen { PRESENTATION, MENU }
 
-/**
- * State owned by the client. A future network adapter calls [receive] for every server message
- * and supplies a command sink to [submitCommand]. Game state remains entirely server-owned.
- */
 class ClientPresentationState {
   var document by mutableStateOf(PresentationDocument())
     private set
@@ -168,7 +186,7 @@ class ClientPresentationState {
   val isMenuOpen: Boolean get() = screen == ClientScreen.MENU
   var input by mutableStateOf("")
     private set
-  var connectionMessage by mutableStateOf("OFFLINE · no server connection")
+  var connectionMessage by mutableStateOf("OFFLINE · sem ligação ao servidor")
 
   private val commandHistory = mutableStateListOf<String>()
   private var historyIndex by mutableStateOf<Int?>(null)
@@ -178,39 +196,43 @@ class ClientPresentationState {
     when (message) {
       is ServerWelcome -> {
         connectionMessage = if (message.isResumed) {
-          "CONNECTED · session resumed"
+          "CONECTADO · sessão retoma"
         } else {
-          "CONNECTED · session established"
+          "CONECTADO · sessão estabelecida"
         }
       }
 
       is ServerReject -> {
-        connectionMessage = "REJECTED · ${message.reason}"
+        connectionMessage = "REJEITADO · ${message.reason}"
+      }
+
+      is ServerAccepted -> {
+        connectionMessage = "ACEITE · ${message.detail}"
       }
 
       is ServerCompleted -> {
         val factsSummary = message.facts.joinToString { it.name }
-        connectionMessage = "COMPLETED · facts: $factsSummary"
+        connectionMessage = "CONCLUÍDO · factos: $factsSummary"
       }
 
       is PresentationSnapshot -> {
         document = message.document
-        connectionMessage = "CONNECTED · presentation revision ${document.revision.value}"
+        connectionMessage = "CONECTADO · revisão de apresentação ${document.revision.value}"
       }
 
       is PresentationPatch -> {
         val updatedDocument = runCatching { document.applyPatch(message) }
         updatedDocument.onSuccess {
           document = it
-          connectionMessage = "CONNECTED · presentation revision ${document.revision.value}"
+          connectionMessage = "CONECTADO · revisão de apresentação ${document.revision.value}"
         }.onFailure {
-          connectionMessage = "PRESENTATION OUT OF DATE · snapshot required"
+          connectionMessage = "APRESENTAÇÃO DESACTUALIZADA · snapshot necessário"
         }
       }
 
-      is ServerRejected -> connectionMessage = "SERVER REJECTED · ${message.reason}"
-      is ServerFailed -> connectionMessage = "SERVER FAILED · ${message.error}"
-      is ServerProtocolError -> connectionMessage = "PROTOCOL ERROR · ${message.description}"
+      is ServerRejected -> connectionMessage = "SERVIDOR REJEITOU · ${message.reason}"
+      is ServerFailed -> connectionMessage = "FALHA NO SERVIDOR · ${message.error}"
+      is ServerProtocolError -> connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
       else -> Unit
     }
   }
@@ -296,20 +318,37 @@ fun main() = application {
     val scope = rememberCoroutineScope()
     val connection = remember { ClientConnection(state) }
 
-    // Conecta automaticamente ao iniciar (pode ser movido para um comando depois)
     LaunchedEffect(Unit) {
       connection.connect(scope)
     }
 
     TerminalApp(state, onCommand = { text ->
-      // Mapeamento mínimo e temporário só para a primeira ação
-      when (text.lowercase()) {
-        "enter", "enter_world" -> connection.sendAction("enter_world")
-        else -> {
-          // Por enquanto só registra; ClientTextCommand ainda não é processado pelo servidor
-          state.connectionMessage = "COMMAND NOT MAPPED · $text"
-        }
+      val trimmed = text.trim()
+      if (trimmed.isEmpty()) return@TerminalApp
+
+      val activeChoices =
+        state.document.blocks.map { it.content }.filterIsInstance<BlockContent.Choices>().flatMap { it.choices }
+          .filter { it.enabled }
+
+      val matchedByShortcut = activeChoices.firstOrNull {
+        it.shortcut.equals(trimmed, ignoreCase = true)
       }
+
+      if (matchedByShortcut != null) {
+        connection.sendSelection(matchedByShortcut.id)
+        return@TerminalApp
+      }
+
+      val matchedByText = activeChoices.firstOrNull {
+        it.text.equals(trimmed, ignoreCase = true)
+      }
+
+      if (matchedByText != null) {
+        connection.sendSelection(matchedByText.id)
+        return@TerminalApp
+      }
+
+      connection.sendTextCommand(trimmed)
     })
   }
 }
@@ -330,7 +369,7 @@ private fun TerminalApp(
           Text("  ·  cliente textual", color = theme.muted, fontSize = 13.sp, fontFamily = mono)
           Spacer(Modifier.weight(1f))
           Text(
-            "[ ${if (state.darkThemeEnabled) "DARK" else "LIGHT"} ]",
+            "[ ${if (state.darkThemeEnabled) "ESCURO" else "CLARO"} ]",
             color = theme.muted,
             fontSize = 12.sp,
             fontFamily = mono
@@ -353,7 +392,6 @@ private fun TerminalApp(
   }
 }
 
-// vai ter coisas do MENU que são somente do lado do client e coisas que de Menu que devem vir do servidor? Eita!
 @Composable
 private fun MenuScreen(theme: TerminalTheme, modifier: Modifier = Modifier) {
   TerminalTile("MENU", theme, modifier) {
@@ -373,10 +411,10 @@ private fun PresentationScreen(document: PresentationDocument, theme: TerminalTh
   val historyBlocks = document.blocks.filter { it.region == PresentationRegion.HISTORY }
 
   Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-    PresentationRegionPane("MAIN", mainBlocks, theme, Modifier.weight(2.2f).fillMaxHeight())
+    PresentationRegionPane("PRINCIPAL", mainBlocks, theme, Modifier.weight(2.2f).fillMaxHeight())
     Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      PresentationRegionPane("SIDEBAR", sidebarBlocks, theme, Modifier.weight(1f))
-      PresentationRegionPane("HISTORY", historyBlocks, theme, Modifier.weight(1f))
+      PresentationRegionPane("BARRA LATERAL", sidebarBlocks, theme, Modifier.weight(1f))
+      PresentationRegionPane("HISTÓRICO", historyBlocks, theme, Modifier.weight(1f))
     }
   }
 }
@@ -393,7 +431,7 @@ private fun PresentationRegionPane(
       Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
       if (blocks.isEmpty()) {
-        TextBlock(theme, "No data received.", color = theme.muted, small = true)
+        TextBlock(theme, "Sem dados recebidos.", color = theme.muted, small = true)
       } else {
         blocks.forEach { block ->
           block.title?.let { TextBlock(theme, it, color = theme.accent, heading = true) }
@@ -417,7 +455,7 @@ private fun PresentationBlockContent(content: BlockContent, theme: TerminalTheme
 
     is BlockContent.Choices -> content.choices.forEach { choice ->
       val shortcut = choice.shortcut?.let { "[$it] " } ?: ""
-      val state = if (choice.enabled) "" else " (unavailable)"
+      val state = if (choice.enabled) "" else " (indisponível)"
       TextBlock(theme, "$shortcut${choice.text}$state", color = if (choice.enabled) theme.foreground else theme.muted)
     }
 
@@ -461,7 +499,10 @@ private fun CommandLine(
       decorationBox = { inner ->
         Box {
           if (state.input.isEmpty()) Text(
-            "type a command · M menu · Enter send", color = theme.muted, fontFamily = mono, fontSize = 14.sp
+            "digite um comando ou atalho · M menu · Enter enviar",
+            color = theme.muted,
+            fontFamily = mono,
+            fontSize = 14.sp
           )
           inner()
         }
@@ -470,7 +511,6 @@ private fun CommandLine(
   }
 }
 
-// quero que os Tiles sejam modulares, ou seja, ocultar ou mostrar mais tiles vão ajustando a grande principal automaticamente, de preferência com "animação" fluida de quando isso acontecer
 @Composable
 private fun TerminalTile(
   title: String,
