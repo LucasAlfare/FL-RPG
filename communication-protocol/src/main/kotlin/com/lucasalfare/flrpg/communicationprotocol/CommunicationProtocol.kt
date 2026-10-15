@@ -11,6 +11,7 @@ val ProtocolJson = Json {
   ignoreUnknownKeys = true
   encodeDefaults = true
   prettyPrint = false
+  classDiscriminator = "messageType"
 }
 
 fun ProtocolMessage.toJson(): String = ProtocolJson.encodeToString(this)

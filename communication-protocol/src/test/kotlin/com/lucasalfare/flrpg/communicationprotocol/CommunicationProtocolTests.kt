@@ -435,4 +435,314 @@ class CommunicationProtocolTests {
     )
     assertTrue(validator.validate(titleSnapshot).isValid)
   }
+
+  @Test
+  fun protocolValidator_acceptsValidClientMessages() {
+    val validator = ProtocolValidator()
+    val metadata = MessageMetadata(
+      messageId = MessageId("msg-1"), sessionId = SessionId("session-1"), sequence = Sequence.ZERO
+    )
+
+    val hello = ClientHello(metadata = metadata)
+    assertTrue(validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, hello).isValid)
+    assertTrue(validator.validateSessionState(SessionState.NON_EXISTENT, hello).isValid)
+
+    val action = ClientAction(metadata = metadata, actionId = "move", parameters = mapOf("dir" to "north"))
+    assertTrue(validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, action).isValid)
+    assertTrue(validator.validateSessionState(SessionState.ESTABLISHED, action).isValid)
+
+    val selection = ClientSelection(metadata = metadata, choiceId = "choice-1")
+    assertTrue(validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, selection).isValid)
+
+    val textCommand = ClientTextCommand(metadata = metadata, rawText = "look")
+    assertTrue(validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, textCommand).isValid)
+
+    val cancel = ClientCancel(metadata = metadata, targetMessageId = MessageId("target-1"))
+    assertTrue(validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, cancel).isValid)
+
+    val resync = ClientResyncRequest(metadata = metadata)
+    assertTrue(validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, resync).isValid)
+  }
+
+  @Test
+  fun protocolValidator_rejectsWrongMessageDirection() {
+    val validator = ProtocolValidator()
+    val metadata = MessageMetadata(
+      messageId = MessageId("msg-1"), sessionId = SessionId("session-1"), sequence = Sequence.ZERO
+    )
+
+    val clientAction = ClientAction(metadata = metadata, actionId = "move")
+    val clientDirectionResult = validator.validateDirection(MessageDirection.SERVER_TO_CLIENT, clientAction)
+    assertFalse(clientDirectionResult.isValid)
+
+    val serverWelcome = ServerWelcome(metadata = metadata)
+    val serverDirectionResult = validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, serverWelcome)
+    assertFalse(serverDirectionResult.isValid)
+
+    val serverEvent = ServerEvent(metadata = metadata, type = "notification")
+    assertFalse(validator.validateDirection(MessageDirection.CLIENT_TO_SERVER, serverEvent).isValid)
+  }
+
+  @Test
+  fun protocolValidator_rejectsUnknownCorrelation() {
+    val validator = ProtocolValidator()
+    val pendingIds = setOf(MessageId("known-request"))
+    val metadataWithUnknown = MessageMetadata(
+      messageId = MessageId("response-1"),
+      sessionId = SessionId("session-1"),
+      sequence = Sequence.ZERO,
+      correlationId = CorrelationId("unknown-request")
+    )
+
+    val accepted = ServerAccepted(metadata = metadataWithUnknown)
+    val acceptedResult = validator.validateCorrelation(accepted, pendingIds)
+    assertFalse(acceptedResult.isValid)
+
+    val rejected = ServerRejected(metadata = metadataWithUnknown, reason = "denied")
+    assertFalse(validator.validateCorrelation(rejected, pendingIds).isValid)
+
+    val completed = ServerCompleted(metadata = metadataWithUnknown)
+    assertFalse(validator.validateCorrelation(completed, pendingIds).isValid)
+
+    val failed = ServerFailed(metadata = metadataWithUnknown, error = "error")
+    assertFalse(validator.validateCorrelation(failed, pendingIds).isValid)
+
+    val metadataWithKnown = MessageMetadata(
+      messageId = MessageId("response-2"),
+      sessionId = SessionId("session-1"),
+      sequence = Sequence(1),
+      correlationId = CorrelationId("known-request")
+    )
+    val acceptedKnown = ServerAccepted(metadata = metadataWithKnown)
+    assertTrue(validator.validateCorrelation(acceptedKnown, pendingIds).isValid)
+  }
+
+  @Test
+  fun protocolValidator_handlesMissingRequiredFields() {
+    val validator = ProtocolValidator()
+    val metadataWithoutCorrelation = MessageMetadata(
+      messageId = MessageId("response-1"), sessionId = SessionId("session-1"), sequence = Sequence.ZERO
+    )
+
+    var acceptedThrew = false
+    try {
+      ServerAccepted(metadata = metadataWithoutCorrelation)
+    } catch (_: IllegalArgumentException) {
+      acceptedThrew = true
+    }
+    assertTrue(acceptedThrew)
+
+    var rejectedThrew = false
+    try {
+      ServerRejected(metadata = metadataWithoutCorrelation, reason = "denied")
+    } catch (_: IllegalArgumentException) {
+      rejectedThrew = true
+    }
+    assertTrue(rejectedThrew)
+
+    var completedThrew = false
+    try {
+      ServerCompleted(metadata = metadataWithoutCorrelation)
+    } catch (_: IllegalArgumentException) {
+      completedThrew = true
+    }
+    assertTrue(completedThrew)
+
+    var failedThrew = false
+    try {
+      ServerFailed(metadata = metadataWithoutCorrelation, error = "error")
+    } catch (_: IllegalArgumentException) {
+      failedThrew = true
+    }
+    assertTrue(failedThrew)
+
+    val metadataWithCorrelation = MessageMetadata(
+      messageId = MessageId("response-2"),
+      sessionId = SessionId("session-1"),
+      sequence = Sequence.ZERO,
+      correlationId = CorrelationId("req-1")
+    )
+    assertTrue(validator.validateCorrelation(ServerAccepted(metadata = metadataWithCorrelation)).isValid)
+    assertTrue(
+      validator.validateCorrelation(
+        ServerRejected(
+          metadata = metadataWithCorrelation, reason = "denied"
+        )
+      ).isValid
+    )
+    assertTrue(validator.validateCorrelation(ServerCompleted(metadata = metadataWithCorrelation)).isValid)
+    assertTrue(validator.validateCorrelation(ServerFailed(metadata = metadataWithCorrelation, error = "error")).isValid)
+  }
+
+  @Test
+  fun protocolMessages_roundTripThroughJson() {
+    val metadata = MessageMetadata(
+      messageId = MessageId("msg-1"),
+      sessionId = SessionId("session-1"),
+      sequence = Sequence(5),
+      correlationId = CorrelationId("corr-1"),
+      version = ProtocolVersion(1, 2),
+      deliveryMode = DeliveryMode.RELIABLE_UNORDERED
+    )
+
+    val hello = ClientHello(metadata = metadata, resumeSessionId = SessionId("resume-1"))
+    val helloJson = hello.toJson()
+    val helloRestored = helloJson.toProtocolMessage<ClientHello>()
+    assertEquals(hello, helloRestored)
+
+    val action = ClientAction(metadata = metadata, actionId = "move", parameters = mapOf("dir" to "north"))
+    val actionJson = action.toJson()
+    val actionRestored = actionJson.toProtocolMessage<ClientAction>()
+    assertEquals(action, actionRestored)
+
+    val selection = ClientSelection(metadata = metadata, choiceId = "c1")
+    assertEquals(selection, selection.toJson().toProtocolMessage<ClientSelection>())
+
+    val textCommand = ClientTextCommand(metadata = metadata, rawText = "look around")
+    assertEquals(textCommand, textCommand.toJson().toProtocolMessage<ClientTextCommand>())
+
+    val cancel = ClientCancel(metadata = metadata, targetMessageId = MessageId("target-1"))
+    assertEquals(cancel, cancel.toJson().toProtocolMessage<ClientCancel>())
+
+    val resync = ClientResyncRequest(
+      metadata = metadata, lastKnownSequence = Sequence(3), lastKnownRevision = Revision(2)
+    )
+    assertEquals(resync, resync.toJson().toProtocolMessage<ClientResyncRequest>())
+
+    val welcome = ServerWelcome(metadata = metadata, isResumed = true)
+    assertEquals(welcome, welcome.toJson().toProtocolMessage<ServerWelcome>())
+
+    val reject = ServerReject(metadata = metadata, reason = RejectionReason.INCOMPATIBLE_VERSION)
+    assertEquals(reject, reject.toJson().toProtocolMessage<ServerReject>())
+
+    val accepted = ServerAccepted(metadata = metadata, detail = "ok")
+    assertEquals(accepted, accepted.toJson().toProtocolMessage<ServerAccepted>())
+
+    val rejected = ServerRejected(metadata = metadata, reason = "no")
+    assertEquals(rejected, rejected.toJson().toProtocolMessage<ServerRejected>())
+
+    val completed = ServerCompleted(
+      metadata = metadata, facts = listOf(ProtocolFact(name = "moved", arguments = mapOf("to" to "room-1")))
+    )
+    assertEquals(completed, completed.toJson().toProtocolMessage<ServerCompleted>())
+
+    val failed = ServerFailed(metadata = metadata, error = "fail")
+    assertEquals(failed, failed.toJson().toProtocolMessage<ServerFailed>())
+
+    val protocolError = ServerProtocolError(metadata = metadata, code = "E1", description = "bad")
+    assertEquals(protocolError, protocolError.toJson().toProtocolMessage<ServerProtocolError>())
+
+    val event = ServerEvent(metadata = metadata, type = "tick", payload = mapOf("t" to "1"))
+    assertEquals(event, event.toJson().toProtocolMessage<ServerEvent>())
+
+    val document = PresentationDocument(
+      revision = Revision(1), blocks = listOf(
+        PresentationBlock(
+          id = BlockId("b1"),
+          content = BlockContent.Text("hello", TextStyle.HEADER),
+          title = "Title",
+          region = PresentationRegion.SIDEBAR
+        ), PresentationBlock(
+          id = BlockId("b2"), content = BlockContent.Choices(
+            choices = listOf(Choice(id = "c1", text = "Go", shortcut = "1", enabled = true))
+          )
+        ), PresentationBlock(
+          id = BlockId("b3"), content = BlockContent.ItemsList(items = listOf("a", "b"), isOrdered = true)
+        ), PresentationBlock(
+          id = BlockId("b4"), content = BlockContent.Feed(
+            feedId = "f1",
+            items = listOf(FeedItem(id = "i1", text = "item", style = TextStyle.MUTED)),
+            ordering = FeedOrdering.REVERSE_CHRONOLOGICAL
+          )
+        )
+      )
+    )
+    val snapshot = PresentationSnapshot(metadata = metadata, document = document)
+    assertEquals(snapshot, snapshot.toJson().toProtocolMessage<PresentationSnapshot>())
+
+    val patch = PresentationPatch(
+      metadata = metadata, baseRevision = Revision.ZERO, newRevision = Revision(1), operations = listOf(
+        PatchOperation.Upsert(PresentationBlock(id = BlockId("u1"), content = BlockContent.Text("up"))),
+        PatchOperation.Remove(BlockId("r1")),
+        PatchOperation.Append(PresentationBlock(id = BlockId("a1"), content = BlockContent.Text("ap"))),
+        PatchOperation.Clear
+      )
+    )
+    assertEquals(patch, patch.toJson().toProtocolMessage<PresentationPatch>())
+  }
+
+  @Test
+  fun protocolValidator_rejectsClientHelloForEstablishedSession() {
+    val validator = ProtocolValidator()
+    val metadata = MessageMetadata(
+      messageId = MessageId("hello-1"), sessionId = SessionId("session-1"), sequence = Sequence.ZERO
+    )
+    val hello = ClientHello(metadata = metadata)
+
+    val establishedResult = validator.validateSessionState(SessionState.ESTABLISHED, hello)
+    assertFalse(establishedResult.isValid)
+
+    val resumedResult = validator.validateSessionState(SessionState.RESUMED, hello)
+    assertFalse(resumedResult.isValid)
+
+    val nonExistentResult = validator.validateSessionState(SessionState.NON_EXISTENT, hello)
+    assertTrue(nonExistentResult.isValid)
+  }
+
+  @Test
+  fun protocolMessages_preserveOptionalFields() {
+    val baseMetadata = MessageMetadata(
+      messageId = MessageId("msg-opt"), sessionId = SessionId("session-1"), sequence = Sequence.ZERO
+    )
+
+    val helloWithoutResume = ClientHello(metadata = baseMetadata)
+    val restoredHello = helloWithoutResume.toJson().toProtocolMessage<ClientHello>()
+    assertEquals(null, restoredHello.resumeSessionId)
+
+    val helloWithResume = ClientHello(metadata = baseMetadata, resumeSessionId = SessionId("resume-42"))
+    assertEquals(SessionId("resume-42"), helloWithResume.toJson().toProtocolMessage<ClientHello>().resumeSessionId)
+
+    val actionEmptyParams = ClientAction(metadata = baseMetadata, actionId = "act")
+    assertEquals(emptyMap(), actionEmptyParams.toJson().toProtocolMessage<ClientAction>().parameters)
+
+    val resyncEmpty = ClientResyncRequest(metadata = baseMetadata)
+    val restoredResync = resyncEmpty.toJson().toProtocolMessage<ClientResyncRequest>()
+    assertEquals(null, restoredResync.lastKnownSequence)
+    assertEquals(null, restoredResync.lastKnownRevision)
+
+    val acceptedNoDetail = ServerAccepted(metadata = baseMetadata.copy(correlationId = CorrelationId("c1")))
+    assertEquals(null, acceptedNoDetail.toJson().toProtocolMessage<ServerAccepted>().detail)
+
+    val completedNoFacts = ServerCompleted(metadata = baseMetadata.copy(correlationId = CorrelationId("c2")))
+    val restoredCompleted = completedNoFacts.toJson().toProtocolMessage<ServerCompleted>()
+    assertEquals(emptyList(), restoredCompleted.facts)
+
+    val choiceNoShortcut = Choice(id = "c1", text = "Option")
+    val choicesBlock = PresentationBlock(
+      id = BlockId("choices"), content = BlockContent.Choices(choices = listOf(choiceNoShortcut))
+    )
+    val doc = PresentationDocument(revision = Revision.ZERO, blocks = listOf(choicesBlock))
+    val snapshot = PresentationSnapshot(metadata = baseMetadata, document = doc)
+    val restoredChoice = snapshot.toJson()
+      .toProtocolMessage<PresentationSnapshot>().document.blocks.first().content as BlockContent.Choices
+    assertEquals(null, restoredChoice.choices.first().shortcut)
+    assertTrue(restoredChoice.choices.first().enabled)
+  }
+
+  @Test
+  fun protocolMessages_rejectMalformedJson() {
+    val invalidJsonSamples = listOf(
+      "", "{", "null", "[]", """{"type":"UnknownMessage"}""", """{"metadata":{}}""", """{"messageId":"x"}"""
+    )
+
+    for (sample in invalidJsonSamples) {
+      var threw = false
+      try {
+        sample.toProtocolMessage<ProtocolMessage>()
+      } catch (_: Exception) {
+        threw = true
+      }
+      assertTrue(threw, "Expected malformed JSON to fail: $sample")
+    }
+  }
 }
