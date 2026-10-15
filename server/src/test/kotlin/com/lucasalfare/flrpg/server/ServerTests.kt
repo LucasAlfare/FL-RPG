@@ -1,9 +1,7 @@
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
-import com.lucasalfare.flrpg.gamedomain.CharacterId
-import com.lucasalfare.flrpg.gamedomain.Interaction
-import com.lucasalfare.flrpg.gamedomain.InteractionId
+import com.lucasalfare.flrpg.gamedomain.*
 import kotlinx.coroutines.runBlocking
 import java.util.*
 import kotlin.test.*
@@ -52,6 +50,38 @@ private fun clientAction(
     messageId = MessageId(messageId), sessionId = sessionId, sequence = sequence
   ), actionId = actionId
 )
+
+private fun clientSelection(
+  messageId: String, sessionId: SessionId, sequence: Sequence, choiceId: String
+): ClientSelection = ClientSelection(
+  metadata = MessageMetadata(
+    messageId = MessageId(messageId), sessionId = sessionId, sequence = sequence
+  ), choiceId = choiceId
+)
+
+private fun clientText(
+  messageId: String, sessionId: SessionId, sequence: Sequence, text: String
+): ClientTextCommand = ClientTextCommand(
+  metadata = MessageMetadata(
+    messageId = MessageId(messageId), sessionId = sessionId, sequence = sequence
+  ), rawText = text
+)
+
+private fun clientCancel(
+  messageId: String, sessionId: SessionId, sequence: Sequence, targetId: String
+): ClientCancel = ClientCancel(
+  metadata = MessageMetadata(
+    messageId = MessageId(messageId), sessionId = sessionId, sequence = sequence
+  ), targetMessageId = MessageId(targetId)
+)
+
+private fun buildProcessor(): GameActionProcessor {
+  val nucleus = Nucleus(NucleusId("test_nucleus"))
+  nucleus.registerLocation("spawn")
+  nucleus.registerLocation("forest")
+  nucleus.connectLocations("spawn", "forest")
+  return GameActionProcessor(nucleus)
+}
 
 class ServerTests {
 
@@ -423,5 +453,308 @@ class ServerTests {
     assertEquals(1, connection.sentMessages.size)
     assertTrue(connection.sentMessages.single() is ServerWelcome)
     assertTrue(connection.closed)
+  }
+
+  @Test
+  fun handleConnection_rejectsUnknownSelection() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val actionProcessor = buildProcessor()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO),
+      clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_does_not_exist")
+    )
+
+    handleConnection(
+      connection = connection, registry = registry, actionProcessor = actionProcessor, offerRegistry = offerRegistry
+    )
+
+    val rejections = connection.sentMessages.filterIsInstance<ServerRejected>()
+    assertEquals(1, rejections.size)
+    assertTrue(rejections.single().reason.contains("Unknown or expired choice"))
+    assertTrue(connection.sentMessages.none { it is ServerCompleted })
+  }
+
+  @Test
+  fun handleConnection_rejectsExpiredSelection() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val actionProcessor = buildProcessor()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO),
+      clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world"),
+      clientSelection("sel-2", sessionId, Sequence(1), "opt_enter_world")
+    )
+
+    handleConnection(
+      connection = connection, registry = registry, actionProcessor = actionProcessor, offerRegistry = offerRegistry
+    )
+
+    val completed = connection.sentMessages.filterIsInstance<ServerCompleted>()
+    assertEquals(1, completed.size)
+
+    val rejections = connection.sentMessages.filterIsInstance<ServerRejected>()
+    assertEquals(1, rejections.size)
+    assertTrue(rejections.single().reason.contains("Unknown or expired choice"))
+  }
+
+  @Test
+  fun handleConnection_collectsRequiredInteractionArguments() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val actionProcessor = buildProcessor()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO),
+      clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world"),
+      clientSelection("sel-2", sessionId, Sequence(1), "opt_move")
+    )
+
+    handleConnection(
+      connection = connection, registry = registry, actionProcessor = actionProcessor, offerRegistry = offerRegistry
+    )
+
+    val accepted = connection.sentMessages.filterIsInstance<ServerAccepted>()
+    assertEquals(1, accepted.size)
+    assertTrue(accepted.single().detail?.contains("targetLocationId") == true)
+
+    val snapshots = connection.sentMessages.filterIsInstance<PresentationSnapshot>()
+    val promptSnapshot = snapshots.last()
+    val hasPrompt = promptSnapshot.document.blocks.any { block ->
+      (block.content as? BlockContent.Text)?.text?.contains("targetLocationId") == true
+    }
+    assertTrue(hasPrompt)
+
+    assertTrue(connection.sentMessages.filterIsInstance<ServerCompleted>().flatMap { it.facts }
+      .none { it.name == "character_moved" })
+  }
+
+  @Test
+  fun handleConnection_keepsPendingInteractionsIsolatedBySession() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val pendingRegistry = SessionPendingRegistry()
+    val actionProcessor = buildProcessor()
+
+    val connectionA = InMemoryConnection(id = "conn-a")
+    val connectionB = InMemoryConnection(id = "conn-b")
+    val sessionA = SessionId("session-a")
+    val sessionB = SessionId("session-b")
+
+    connectionA.enqueue(
+      clientHello("hello-a", sessionA, Sequence.ZERO),
+      clientSelection("sel-a1", sessionA, Sequence.ZERO, "opt_enter_world"),
+      clientSelection("sel-a2", sessionA, Sequence(1), "opt_move")
+    )
+    connectionB.enqueue(
+      clientHello("hello-b", sessionB, Sequence.ZERO),
+      clientSelection("sel-b1", sessionB, Sequence.ZERO, "opt_enter_world")
+    )
+
+    handleConnection(
+      connection = connectionA,
+      registry = registry,
+      actionProcessor = actionProcessor,
+      offerRegistry = offerRegistry,
+      pendingRegistry = pendingRegistry
+    )
+
+    handleConnection(
+      connection = connectionB,
+      registry = registry,
+      actionProcessor = actionProcessor,
+      offerRegistry = offerRegistry,
+      pendingRegistry = pendingRegistry
+    )
+
+    val acceptedA = connectionA.sentMessages.filterIsInstance<ServerAccepted>()
+    val acceptedB = connectionB.sentMessages.filterIsInstance<ServerAccepted>()
+
+    assertEquals(1, acceptedA.size)
+    assertTrue(acceptedA.single().detail?.contains("targetLocationId") == true)
+    assertTrue(acceptedB.isEmpty())
+
+    val completedA = connectionA.sentMessages.filterIsInstance<ServerCompleted>()
+    val completedB = connectionB.sentMessages.filterIsInstance<ServerCompleted>()
+    assertEquals(1, completedA.size)
+    assertEquals(1, completedB.size)
+    assertTrue(completedB.single().facts.any { it.name == "character_entered" })
+  }
+
+  @Test
+  fun handleConnection_clearsCompletedPendingInteraction() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val actionProcessor = buildProcessor()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO),
+      clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world"),
+      clientSelection("sel-2", sessionId, Sequence(1), "opt_move"),
+      clientText("txt-1", sessionId, Sequence(2), "forest"),
+      clientText("txt-2", sessionId, Sequence(3), "noop")
+    )
+
+    handleConnection(
+      connection = connection, registry = registry, actionProcessor = actionProcessor, offerRegistry = offerRegistry
+    )
+
+    val moveCompleted = connection.sentMessages.filterIsInstance<ServerCompleted>().flatMap { it.facts }
+      .any { it.name == "character_moved" }
+    assertTrue(moveCompleted)
+
+    val finalRejection = connection.sentMessages.filterIsInstance<ServerRejected>().last()
+    assertTrue(finalRejection.reason.contains("No pending interaction"))
+  }
+
+  @Test
+  fun handleConnection_clearsCancelledPendingInteraction() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val actionProcessor = buildProcessor()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO),
+      clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world"),
+      clientSelection("sel-2", sessionId, Sequence(1), "opt_move"),
+      clientCancel("cancel-1", sessionId, Sequence(2), "sel-2"),
+      clientText("txt-1", sessionId, Sequence(3), "forest")
+    )
+
+    handleConnection(
+      connection = connection, registry = registry, actionProcessor = actionProcessor, offerRegistry = offerRegistry
+    )
+
+    val cancelled = connection.sentMessages.filterIsInstance<ServerAccepted>().any {
+      it.detail?.contains("Cancelled pending interaction") == true
+    }
+    assertTrue(cancelled)
+
+    val finalRejection = connection.sentMessages.filterIsInstance<ServerRejected>().last()
+    assertTrue(finalRejection.reason.contains("No pending interaction"))
+  }
+
+  @Test
+  fun handleConnection_executesValidActionThroughDomain() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val actionProcessor = buildProcessor()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO),
+      clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world")
+    )
+
+    handleConnection(
+      connection = connection, registry = registry, actionProcessor = actionProcessor, offerRegistry = offerRegistry
+    )
+
+    val completed = connection.sentMessages.filterIsInstance<ServerCompleted>()
+    assertEquals(1, completed.size)
+    assertTrue(completed.single().facts.any { it.name == "character_entered" })
+  }
+
+  @Test
+  fun handleConnection_doesNotExecuteInvalidAction() = runBlocking {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val actionProcessor = buildProcessor()
+    val connection = InMemoryConnection(id = "conn-1")
+    val sessionId = SessionId("session-1")
+
+    connection.enqueue(
+      clientHello("hello-1", sessionId, Sequence.ZERO),
+      clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world"),
+      clientSelection("sel-2", sessionId, Sequence(1), "opt_move"),
+      clientText("txt-1", sessionId, Sequence(2), "does_not_exist")
+    )
+
+    handleConnection(
+      connection = connection, registry = registry, actionProcessor = actionProcessor, offerRegistry = offerRegistry
+    )
+
+    val rejections = connection.sentMessages.filterIsInstance<ServerRejected>()
+    assertTrue(rejections.any { it.reason.contains("does not exist") })
+
+    val movedFacts = connection.sentMessages.filterIsInstance<ServerCompleted>().flatMap { it.facts }
+      .filter { it.name == "character_moved" || it.name == "character_movement_completed" }
+    assertTrue(movedFacts.isEmpty())
+  }
+
+  @Test
+  fun distributeAudiences_sendsEventsOnlyToRelevantCharacters() = runBlocking {
+    val registry = ConnectionRegistry()
+    val sessionA = SessionId("session-a")
+    val sessionB = SessionId("session-b")
+    val characterA = CharacterId("char-a")
+    val characterB = CharacterId("char-b")
+
+    val connectionA = InMemoryConnection(id = "conn-a", sessionId = sessionA, characterId = characterA)
+    val connectionB = InMemoryConnection(id = "conn-b", sessionId = sessionB, characterId = characterB)
+    registry.register(connectionA)
+    registry.register(connectionB)
+
+    val fact = GameFact(name = "presence", arguments = mapOf("locationId" to "spawn"))
+    val audience = GameFactAudience(fact = fact, characterIds = listOf(characterA))
+
+    distributeAudiences(listOf(audience), registry)
+
+    val eventsA = connectionA.sentMessages.filterIsInstance<ServerEvent>()
+    val eventsB = connectionB.sentMessages.filterIsInstance<ServerEvent>()
+
+    assertEquals(1, eventsA.size)
+    assertEquals("presence", eventsA.single().type)
+    assertEquals("spawn", eventsA.single().payload["locationId"])
+    assertTrue(eventsB.isEmpty())
+  }
+
+  @Test
+  fun distributeAudiences_doesNotDuplicateActorResult() = runBlocking {
+    val registry = ConnectionRegistry()
+    val sessionA = SessionId("session-a")
+    val sessionB = SessionId("session-b")
+    val characterA = CharacterId("char-a")
+    val characterB = CharacterId("char-b")
+
+    val connectionA = InMemoryConnection(id = "conn-a", sessionId = sessionA, characterId = characterA)
+    val connectionB = InMemoryConnection(id = "conn-b", sessionId = sessionB, characterId = characterB)
+    registry.register(connectionA)
+    registry.register(connectionB)
+
+    val fact = GameFact(name = "presence", arguments = mapOf("locationId" to "spawn"))
+    val audience = GameFactAudience(fact = fact, characterIds = listOf(characterA, characterB))
+
+    distributeAudiences(listOf(audience), registry, excludeCharacterId = characterA)
+
+    assertTrue(connectionA.sentMessages.isEmpty())
+    assertEquals(1, connectionB.sentMessages.filterIsInstance<ServerEvent>().size)
+  }
+
+  @Test
+  fun distributeAudiences_handlesMissingRecipientConnection() = runBlocking {
+    val registry = ConnectionRegistry()
+
+    val fact = GameFact(name = "presence", arguments = mapOf("locationId" to "spawn"))
+    val audience = GameFactAudience(
+      fact = fact, characterIds = listOf(CharacterId("missing-character"))
+    )
+
+    distributeAudiences(listOf(audience), registry)
+
+    assertTrue(registry.activeConnections().isEmpty())
   }
 }
