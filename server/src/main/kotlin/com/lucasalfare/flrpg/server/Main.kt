@@ -223,6 +223,103 @@ suspend fun handleConnection(
           continue
         }
 
+        if (message is ClientSelection && actionProcessor != null) {
+          val characterId = registry.findCharacterIdBySessionId(currentSessionId)
+
+          if (characterId != null) {
+            val offerState = offerRegistry.find(currentSessionId)
+            val interaction = offerState?.findInteraction(message.choiceId)
+
+            val correlationId = CorrelationId(message.metadata.messageId)
+
+            val responseMessage = when {
+              interaction == null -> {
+                ServerRejected(
+                  metadata = MessageMetadata(
+                    messageId = MessageId(UUID.randomUUID().toString()),
+                    sessionId = currentSessionId,
+                    sequence = Sequence.ZERO,
+                    correlationId = correlationId
+                  ), reason = "Unknown or expired choice: ${message.choiceId}"
+                )
+              }
+
+              interaction.needsAdditionalArguments -> {
+                ServerRejected(
+                  metadata = MessageMetadata(
+                    messageId = MessageId(UUID.randomUUID().toString()),
+                    sessionId = currentSessionId,
+                    sequence = Sequence.ZERO,
+                    correlationId = correlationId
+                  ), reason = "Interaction requires additional arguments"
+                )
+              }
+
+              interaction.actionName == null -> {
+                ServerRejected(
+                  metadata = MessageMetadata(
+                    messageId = MessageId(UUID.randomUUID().toString()),
+                    sessionId = currentSessionId,
+                    sequence = Sequence.ZERO,
+                    correlationId = correlationId
+                  ), reason = "Interaction has no associated action"
+                )
+              }
+
+              else -> {
+                val gameAction = GameAction(
+                  name = interaction.actionName!!, actorId = characterId, arguments = interaction.fixedArguments
+                )
+
+                val execution = actionProcessor.processWithAudiences(gameAction)
+                when (val result = execution.result) {
+                  is GameActionResult.Success -> {
+                    val protocolFacts = result.facts.map { fact ->
+                      ProtocolFact(
+                        name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
+                          value?.toString() ?: ""
+                        })
+                    }
+
+                    ServerCompleted(
+                      metadata = MessageMetadata(
+                        messageId = MessageId(UUID.randomUUID().toString()),
+                        sessionId = currentSessionId,
+                        sequence = Sequence.ZERO,
+                        correlationId = correlationId
+                      ), facts = protocolFacts
+                    ).also {
+                      // distribute + refresh presentation only on success
+                      distributeAudiences(
+                        audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
+                      )
+                      presentAvailableInteractions(
+                        connection = connection,
+                        actionProcessor = actionProcessor,
+                        offerRegistry = offerRegistry,
+                        preparer = presentationPreparer
+                      )
+                    }
+                  }
+
+                  is GameActionResult.Rejected -> {
+                    ServerRejected(
+                      metadata = MessageMetadata(
+                        messageId = MessageId(UUID.randomUUID().toString()),
+                        sessionId = currentSessionId,
+                        sequence = Sequence.ZERO,
+                        correlationId = correlationId
+                      ), reason = result.reason
+                    )
+                  }
+                }
+              }
+            }
+
+            connection.send(responseMessage)
+          }
+        }
+
         if (message is ClientAction && actionProcessor != null) {
           val characterId = registry.findCharacterIdBySessionId(
             currentSessionId
