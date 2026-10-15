@@ -1,5 +1,7 @@
 package com.lucasalfare.flrpg.gamedomain
 
+import com.lucasalfare.flworld.WorldEntityId
+import com.lucasalfare.flworld.WorldLocationId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -185,5 +187,182 @@ class GameDomainTests {
     val audience = processor.findFactAudiences(listOf(fact)).single()
 
     assertEquals(audience.characterIds.size, audience.characterIds.toSet().size)
+  }
+
+  @Test
+  fun enterWorld_createsCharacterAndWorldEntity() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+
+    val result = processor.process(
+      GameAction(
+        name = "enter_world", actorId = CharacterId("hero"), arguments = mapOf("locationId" to "spawn")
+      )
+    )
+
+    assertTrue(result is GameActionResult.Success)
+    assertTrue(nucleus.containsCharacter(CharacterId("hero")))
+    assertEquals(
+      WorldLocationId("spawn"), nucleus.world.state.getLocation(WorldEntityId("hero"))
+    )
+  }
+
+  @Test
+  fun enterWorld_rejectsDuplicateEntryWithoutChangingState() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+    val entityId = WorldEntityId(actorId.value)
+
+    processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+    )
+
+    val result = processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "town"))
+    )
+
+    assertTrue(result is GameActionResult.Rejected)
+    assertTrue(result.facts.isEmpty())
+    assertTrue(nucleus.containsCharacter(actorId))
+    assertEquals(WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId))
+    assertTrue(nucleus.world.getActiveMovements().isEmpty())
+  }
+
+  @Test
+  fun move_rejectsMissingOrInvalidDestination() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+    val entityId = WorldEntityId(actorId.value)
+
+    processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+    )
+
+    val missing = processor.process(GameAction("move", actorId))
+    val invalid = processor.process(
+      GameAction("move", actorId, mapOf("targetLocationId" to "nowhere"))
+    )
+
+    assertTrue(missing is GameActionResult.Rejected)
+    assertTrue(invalid is GameActionResult.Rejected)
+    assertEquals(WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId))
+    assertTrue(nucleus.world.getActiveMovements().isEmpty())
+  }
+
+  @Test
+  fun move_rejectsMovementWithoutValidPath() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+    val entityId = WorldEntityId(actorId.value)
+
+    processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+    )
+    nucleus.registerLocation("town")
+
+    val result = processor.process(
+      GameAction("move", actorId, mapOf("targetLocationId" to "town"))
+    )
+
+    assertTrue(result is GameActionResult.Rejected)
+    assertEquals(WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId))
+    assertTrue(nucleus.world.getActiveMovements().isEmpty())
+  }
+
+  @Test
+  fun move_startsMovementWithoutTeleporting() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+    val entityId = WorldEntityId(actorId.value)
+
+    processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+    )
+    nucleus.connectLocations("spawn", "town")
+
+    val result = processor.process(
+      GameAction("move", actorId, mapOf("targetLocationId" to "town"))
+    )
+
+    assertTrue(result is GameActionResult.Success)
+    assertEquals(WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId))
+
+    val movement = nucleus.world.getMovement(entityId)
+    assertEquals(movement?.isInProgress, true)
+    assertEquals(WorldLocationId("town"), movement?.destination)
+  }
+
+  @Test
+  fun advanceTime_completesMovementAndProducesFact() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+    val entityId = WorldEntityId(actorId.value)
+
+    processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+    )
+    nucleus.connectLocations("spawn", "town")
+    processor.process(
+      GameAction("move", actorId, mapOf("targetLocationId" to "town"))
+    )
+
+    val facts = processor.advanceTime(10)
+
+    assertEquals(1, facts.size)
+    val fact = facts.single()
+    assertEquals("character_movement_completed", fact.name)
+    assertEquals("hero", fact.arguments["characterId"])
+    assertEquals("spawn", fact.arguments["originLocationId"])
+    assertEquals("town", fact.arguments["locationId"])
+    assertEquals(WorldLocationId("town"), nucleus.world.state.getLocation(entityId))
+  }
+
+  @Test
+  fun advanceTime_doesNotCompleteMovementTooEarly() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+    val entityId = WorldEntityId(actorId.value)
+
+    processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+    )
+    nucleus.connectLocations("spawn", "middle")
+    nucleus.connectLocations("middle", "town")
+    processor.process(
+      GameAction("move", actorId, mapOf("targetLocationId" to "town"))
+    )
+
+    val facts = processor.advanceTime(1)
+
+    assertTrue(facts.isEmpty())
+    assertEquals(WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId))
+    assertEquals(nucleus.world.getMovement(entityId)?.isInProgress, true)
+  }
+
+  @Test
+  fun movementCompletionProducesExpectedFactOnce() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+
+    processor.process(
+      GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+    )
+    nucleus.connectLocations("spawn", "town")
+    processor.process(
+      GameAction("move", actorId, mapOf("targetLocationId" to "town"))
+    )
+
+    val firstFacts = processor.advanceTime(10)
+    val secondFacts = processor.advanceTime(10)
+
+    assertEquals(1, firstFacts.count { it.name == "character_movement_completed" })
+    assertEquals(0, secondFacts.count { it.name == "character_movement_completed" })
   }
 }
