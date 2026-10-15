@@ -1,9 +1,6 @@
 package com.lucasalfare.flrpg.communicationprotocol
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import kotlin.test.*
 
 class CommunicationProtocolTests {
 
@@ -744,5 +741,232 @@ class CommunicationProtocolTests {
       }
       assertTrue(threw, "Expected malformed JSON to fail: $sample")
     }
+  }
+
+  @Test
+  fun presentationSnapshot_replacesPreviousDocument() {
+    val previous = PresentationDocument(
+      revision = Revision(3), blocks = listOf(
+        PresentationBlock(id = BlockId("old"), content = BlockContent.Text("old content"))
+      )
+    )
+    val newDocument = PresentationDocument(
+      revision = Revision(9), blocks = listOf(
+        PresentationBlock(id = BlockId("new"), content = BlockContent.Text("new content"))
+      )
+    )
+    val snapshot = PresentationSnapshot(
+      metadata = MessageMetadata(
+        messageId = MessageId("snap-1"), sessionId = SessionId("session-1"), sequence = Sequence(4)
+      ), document = newDocument
+    )
+
+    val result = previous.applySnapshot(snapshot)
+
+    assertEquals(newDocument, result)
+    assertEquals(Revision(9), result.revision)
+    assertEquals(1, result.blocks.size)
+    assertEquals(BlockId("new"), result.blocks.first().id)
+    assertEquals(Revision(3), previous.revision)
+    assertEquals(1, previous.blocks.size)
+    assertEquals(BlockId("old"), previous.blocks.first().id)
+  }
+
+  @Test
+  fun applyPatch_appliesValidUpsert() {
+    val original = PresentationDocument(
+      revision = Revision(1), blocks = listOf(
+        PresentationBlock(id = BlockId("a"), content = BlockContent.Text("original-a")),
+        PresentationBlock(id = BlockId("b"), content = BlockContent.Text("original-b"))
+      )
+    )
+    val updatedBlock = PresentationBlock(id = BlockId("a"), content = BlockContent.Text("updated-a"))
+    val insertedBlock = PresentationBlock(id = BlockId("c"), content = BlockContent.Text("new-c"))
+    val patch = PresentationPatch(
+      metadata = MessageMetadata(
+        messageId = MessageId("patch-upsert"), sessionId = SessionId("session-1"), sequence = Sequence(2)
+      ), baseRevision = Revision(1), newRevision = Revision(2), operations = listOf(
+        PatchOperation.Upsert(updatedBlock), PatchOperation.Upsert(insertedBlock)
+      )
+    )
+
+    val result = original.applyPatch(patch)
+
+    assertEquals(Revision(2), result.revision)
+    assertEquals(3, result.blocks.size)
+    assertEquals(updatedBlock, result.blocks.first { it.id == BlockId("a") })
+    assertEquals(insertedBlock, result.blocks.first { it.id == BlockId("c") })
+    assertEquals(Revision(1), original.revision)
+    assertEquals(2, original.blocks.size)
+  }
+
+  @Test
+  fun applyPatch_appliesValidRemove() {
+    val original = PresentationDocument(
+      revision = Revision(1), blocks = listOf(
+        PresentationBlock(id = BlockId("a"), content = BlockContent.Text("a")),
+        PresentationBlock(id = BlockId("b"), content = BlockContent.Text("b"))
+      )
+    )
+    val patch = PresentationPatch(
+      metadata = MessageMetadata(
+        messageId = MessageId("patch-remove"), sessionId = SessionId("session-1"), sequence = Sequence(2)
+      ), baseRevision = Revision(1), newRevision = Revision(2), operations = listOf(PatchOperation.Remove(BlockId("a")))
+    )
+
+    val result = original.applyPatch(patch)
+
+    assertEquals(Revision(2), result.revision)
+    assertEquals(1, result.blocks.size)
+    assertEquals(BlockId("b"), result.blocks.first().id)
+    assertEquals(Revision(1), original.revision)
+    assertEquals(2, original.blocks.size)
+  }
+
+  @Test
+  fun applyPatch_appliesValidAppend() {
+    val original = PresentationDocument(
+      revision = Revision(1), blocks = listOf(PresentationBlock(id = BlockId("a"), content = BlockContent.Text("a")))
+    )
+    val appendedBlock = PresentationBlock(id = BlockId("b"), content = BlockContent.Text("b"))
+    val patch = PresentationPatch(
+      metadata = MessageMetadata(
+        messageId = MessageId("patch-append"), sessionId = SessionId("session-1"), sequence = Sequence(2)
+      ),
+      baseRevision = Revision(1),
+      newRevision = Revision(2),
+      operations = listOf(PatchOperation.Append(appendedBlock))
+    )
+
+    val result = original.applyPatch(patch)
+
+    assertEquals(Revision(2), result.revision)
+    assertEquals(2, result.blocks.size)
+    assertEquals(BlockId("a"), result.blocks[0].id)
+    assertEquals(appendedBlock, result.blocks[1])
+    assertEquals(Revision(1), original.revision)
+    assertEquals(1, original.blocks.size)
+  }
+
+  @Test
+  fun applyPatch_rejectsInvalidPatch() {
+    val original = PresentationDocument(
+      revision = Revision(5), blocks = listOf(PresentationBlock(id = BlockId("a"), content = BlockContent.Text("a")))
+    )
+
+    val wrongBaseRevision = PresentationPatch(
+      metadata = MessageMetadata(
+        messageId = MessageId("patch-wrong-rev"), sessionId = SessionId("session-1"), sequence = Sequence(2)
+      ), baseRevision = Revision(4), newRevision = Revision(6), operations = listOf(PatchOperation.Clear)
+    )
+    assertFailsWith<IllegalArgumentException> { original.applyPatch(wrongBaseRevision) }
+
+    val removeMissing = PresentationPatch(
+      metadata = MessageMetadata(
+        messageId = MessageId("patch-remove-missing"), sessionId = SessionId("session-1"), sequence = Sequence(3)
+      ),
+      baseRevision = Revision(5),
+      newRevision = Revision(6),
+      operations = listOf(PatchOperation.Remove(BlockId("missing")))
+    )
+    assertFailsWith<IllegalArgumentException> { original.applyPatch(removeMissing) }
+
+    val appendDuplicate = PresentationPatch(
+      metadata = MessageMetadata(
+        messageId = MessageId("patch-append-dup"), sessionId = SessionId("session-1"), sequence = Sequence(4)
+      ), baseRevision = Revision(5), newRevision = Revision(6), operations = listOf(
+        PatchOperation.Append(
+          PresentationBlock(id = BlockId("a"), content = BlockContent.Text("dup"))
+        )
+      )
+    )
+    assertFailsWith<IllegalArgumentException> { original.applyPatch(appendDuplicate) }
+
+    assertEquals(Revision(5), original.revision)
+    assertEquals(1, original.blocks.size)
+    assertEquals(BlockId("a"), original.blocks.first().id)
+  }
+
+  @Test
+  fun applyPatch_preservesOriginalDocumentOnFailure() {
+    val original = PresentationDocument(
+      revision = Revision(1), blocks = listOf(
+        PresentationBlock(id = BlockId("a"), content = BlockContent.Text("a")),
+        PresentationBlock(id = BlockId("b"), content = BlockContent.Text("b"))
+      )
+    )
+    val originalBlocks = original.blocks.toList()
+
+    val patch = PresentationPatch(
+      metadata = MessageMetadata(
+        messageId = MessageId("patch-partial"), sessionId = SessionId("session-1"), sequence = Sequence(2)
+      ), baseRevision = Revision(1), newRevision = Revision(2), operations = listOf(
+        PatchOperation.Upsert(
+          PresentationBlock(id = BlockId("a"), content = BlockContent.Text("modified"))
+        ), PatchOperation.Remove(BlockId("does-not-exist"))
+      )
+    )
+
+    assertFailsWith<IllegalArgumentException> { original.applyPatch(patch) }
+
+    assertEquals(Revision(1), original.revision)
+    assertEquals(originalBlocks, original.blocks)
+    assertEquals(2, original.blocks.size)
+    assertEquals(BlockContent.Text("a"), original.blocks.first { it.id == BlockId("a") }.content)
+  }
+
+  @Test
+  fun resyncHandler_appliesSnapshot() {
+    val handler = ResyncHandler()
+    val snapshotDocument = PresentationDocument(
+      revision = Revision(7), blocks = listOf(
+        PresentationBlock(id = BlockId("main"), content = BlockContent.Text("restored"))
+      )
+    )
+    val snapshot = PresentationSnapshot(
+      metadata = MessageMetadata(
+        messageId = MessageId("snap-resync"), sessionId = SessionId("session-1"), sequence = Sequence(9)
+      ), document = snapshotDocument
+    )
+    val currentDocument = PresentationDocument(
+      revision = Revision(2), blocks = listOf(
+        PresentationBlock(id = BlockId("stale"), content = BlockContent.Text("stale"))
+      )
+    )
+    val tracker = SequenceTracker(Sequence(1))
+
+    val result = handler.applyResync(snapshot, tracker)
+
+    assertEquals(snapshotDocument, result)
+    assertEquals(Revision(7), result.revision)
+    assertEquals(1, result.blocks.size)
+    assertEquals(BlockId("main"), result.blocks.first().id)
+    assertEquals(Revision(2), currentDocument.revision)
+  }
+
+  @Test
+  fun resyncHandler_resetsSequenceState() {
+    val handler = ResyncHandler()
+    val tracker = SequenceTracker(Sequence(1))
+    val processedId = MessageId("processed-before-resync")
+    tracker.process(processedId, Sequence(1))
+    assertTrue(tracker.isProcessed(processedId))
+    assertEquals(Sequence(2), tracker.expectedSequence)
+
+    val snapshotDocument = PresentationDocument(
+      revision = Revision(3), blocks = listOf(
+        PresentationBlock(id = BlockId("main"), content = BlockContent.Text("after resync"))
+      )
+    )
+    val snapshot = PresentationSnapshot(
+      metadata = MessageMetadata(
+        messageId = MessageId("snap-resync"), sessionId = SessionId("session-1"), sequence = Sequence(20)
+      ), document = snapshotDocument
+    )
+
+    handler.applyResync(snapshot, tracker)
+
+    assertEquals(Sequence(21), tracker.expectedSequence)
+    assertFalse(tracker.isProcessed(processedId))
   }
 }
