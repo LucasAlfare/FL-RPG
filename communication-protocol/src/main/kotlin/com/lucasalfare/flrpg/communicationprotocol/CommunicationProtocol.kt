@@ -358,12 +358,15 @@ enum class TextStyle {
 
 @Serializable
 data class Choice(
-  val id: String,
-  val text: String,
-  val shortcut: String? = null,
-  val enabled: Boolean = true
+  val id: String, val text: String, val shortcut: String? = null, val enabled: Boolean = true
 ) {
-  init { require(id.isNotBlank()) { "Choice ID must not be blank." } }
+  init {
+    require(id.isNotBlank()) { "Choice ID must not be blank." }
+    require(text.isNotBlank()) { "Choice text must not be blank." }
+    require(shortcut == null || shortcut.isNotBlank()) {
+      "Choice shortcut cannot be blank when supplied."
+    }
+  }
 }
 
 @Serializable
@@ -758,16 +761,27 @@ class StructuralValidator(val limits: ProtocolLimits = ProtocolLimits()) {
         if (content.choices.size > limits.maxChoicesPerBlock) {
           return invalid("Choices count exceeds maximum of ${limits.maxChoicesPerBlock}.")
         }
+        val seenIds = mutableSetOf<String>()
+        val seenShortcuts = mutableSetOf<String>()
         for (choice in content.choices) {
           if (choice.id.isBlank()) return invalid("Choice ID cannot be blank.")
+          if (!seenIds.add(choice.id)) {
+            return invalid("Duplicate choice ID '${choice.id}' within the same Choices block.")
+          }
+          if (choice.text.isBlank()) return invalid("Choice text cannot be blank.")
           if (choice.text.length > limits.maxTextLength) {
             return invalid("Choice text length exceeds maximum of ${limits.maxTextLength}.")
           }
-          if (choice.shortcut != null && choice.shortcut.isBlank()) {
-            return invalid("Choice shortcut cannot be blank when supplied.")
-          }
-          if (choice.shortcut != null && choice.shortcut.length > limits.maxTextLength) {
-            return invalid("Choice shortcut length exceeds maximum of ${limits.maxTextLength}.")
+          if (choice.shortcut != null) {
+            if (choice.shortcut.isBlank()) {
+              return invalid("Choice shortcut cannot be blank when supplied.")
+            }
+            if (choice.shortcut.length > limits.maxTextLength) {
+              return invalid("Choice shortcut length exceeds maximum of ${limits.maxTextLength}.")
+            }
+            if (!seenShortcuts.add(choice.shortcut)) {
+              return invalid("Duplicate choice shortcut '${choice.shortcut}' within the same Choices block.")
+            }
           }
         }
         ValidationResult.Valid

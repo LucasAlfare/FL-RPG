@@ -127,6 +127,34 @@ data class Interaction(
     get() = requiredArgumentNames.isEmpty()
 }
 
+fun interface InteractionProvider {
+  fun availableInteractions(characterId: CharacterId, nucleus: Nucleus): List<Interaction>
+}
+
+class DefaultInteractionProvider : InteractionProvider {
+  override fun availableInteractions(characterId: CharacterId, nucleus: Nucleus): List<Interaction> {
+    return if (!nucleus.containsCharacter(characterId)) {
+      listOf(
+        Interaction(
+          id = InteractionId("enter_world"),
+          label = "Enter the world",
+          actionName = "enter_world",
+          fixedArguments = mapOf("locationId" to "spawn")
+        )
+      )
+    } else {
+      listOf(
+        Interaction(
+          id = InteractionId("move"),
+          label = "Move to a location",
+          actionName = "move",
+          requiredArgumentNames = listOf("targetLocationId")
+        )
+      )
+    }
+  }
+}
+
 sealed interface GameActionResult {
   val facts: List<GameFact>
 
@@ -271,7 +299,9 @@ class MoveHandler : GameActionHandler {
 }
 
 class GameActionProcessor(
-  val nucleus: Nucleus, handlers: List<GameActionHandler> = defaultHandlers()
+  val nucleus: Nucleus,
+  handlers: List<GameActionHandler> = defaultHandlers(),
+  private val interactionProvider: InteractionProvider = DefaultInteractionProvider()
 ) {
   private val handlerRegistry: Map<String, GameActionHandler> = buildMap {
     for (handler in handlers) {
@@ -286,6 +316,10 @@ class GameActionProcessor(
     fun defaultHandlers(): List<GameActionHandler> = listOf(
       EnterWorldHandler(), MoveHandler()
     )
+  }
+
+  fun availableInteractions(characterId: CharacterId): List<Interaction> = synchronized(nucleus.stateLock) {
+    interactionProvider.availableInteractions(characterId, nucleus)
   }
 
   fun process(action: GameAction): GameActionResult = synchronized(nucleus.stateLock) {
