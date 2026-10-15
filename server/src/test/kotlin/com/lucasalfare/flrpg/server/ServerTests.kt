@@ -2,7 +2,15 @@ package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
 import com.lucasalfare.flrpg.gamedomain.*
+import io.ktor.client.plugins.websocket.*
+import io.ktor.client.request.*
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.server.testing.*
+import io.ktor.websocket.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.util.*
 import kotlin.test.*
 
@@ -81,6 +89,11 @@ private fun buildProcessor(): GameActionProcessor {
   nucleus.registerLocation("forest")
   nucleus.connectLocations("spawn", "forest")
   return GameActionProcessor(nucleus)
+}
+
+private suspend fun DefaultClientWebSocketSession.receiveServerMessage(): ServerMessage {
+  val frame = incoming.receive() as Frame.Text
+  return frame.readText().toProtocolMessage<ProtocolMessage>() as ServerMessage
 }
 
 class ServerTests {
@@ -756,5 +769,159 @@ class ServerTests {
     distributeAudiences(listOf(audience), registry)
 
     assertTrue(registry.activeConnections().isEmpty())
+  }
+}
+
+class ServerNetworkTests {
+
+  @Test
+  fun healthEndpoint_returnsOk() = testApplication {
+    application {
+      module(actionProcessor = buildProcessor())
+    }
+
+    val response = client.get("/health")
+
+    assertEquals(HttpStatusCode.OK, response.status)
+    assertEquals("OK", response.bodyAsText())
+  }
+
+  @Test
+  fun webSocket_establishesValidSession() = testApplication {
+    val registry = ConnectionRegistry()
+    application {
+      module(connectionRegistry = registry, actionProcessor = buildProcessor())
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("session-1")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-1", sessionId, Sequence.ZERO).toJson()))
+
+      val welcome = receiveServerMessage()
+      assertIs<ServerWelcome>(welcome)
+      assertEquals(sessionId, welcome.metadata.sessionId)
+      assertFalse(welcome.isResumed)
+    }
+  }
+
+  @Test
+  fun webSocket_rejectsInvalidHandshake() = testApplication {
+    val registry = ConnectionRegistry()
+    application {
+      module(connectionRegistry = registry, actionProcessor = buildProcessor())
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("session-1")
+
+    wsClient.webSocket("/game") {
+      send(
+        Frame.Text(
+          clientHello("hello-1", sessionId, Sequence.ZERO, version = ProtocolVersion(2, 0)).toJson()
+        )
+      )
+
+      val response = receiveServerMessage()
+      assertIs<ServerReject>(response)
+      assertEquals(RejectionReason.INCOMPATIBLE_VERSION, response.reason)
+    }
+  }
+
+  @Test
+  fun webSocket_processesValidGameMessage() = testApplication {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = buildProcessor(), offerRegistry = offerRegistry
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("session-1")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-1", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+
+      send(Frame.Text(clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world").toJson()))
+
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      val completed = receiveServerMessage()
+      assertIs<ServerCompleted>(completed)
+      assertTrue(completed.facts.any { it.name == "character_entered" })
+    }
+  }
+
+  @Test
+  fun webSocket_doesNotExecuteDuplicateAction() = testApplication {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = buildProcessor(), offerRegistry = offerRegistry
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("session-1")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-1", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+
+      send(Frame.Text(clientSelection("sel-dup", sessionId, Sequence.ZERO, "opt_enter_world").toJson()))
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      val firstCompleted = receiveServerMessage()
+      assertIs<ServerCompleted>(firstCompleted)
+      assertTrue(firstCompleted.facts.any { it.name == "character_entered" })
+
+      send(Frame.Text(clientSelection("sel-dup", sessionId, Sequence(1), "opt_enter_world").toJson()))
+      send(Frame.Text(clientSelection("sel-follow", sessionId, Sequence(1), "opt_move").toJson()))
+
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      val accepted = receiveServerMessage()
+      assertIs<ServerAccepted>(accepted)
+      assertTrue(accepted.detail?.contains("targetLocationId") == true)
+    }
+  }
+
+  @Test
+  fun webSocket_releasesResourcesAfterDisconnect() = testApplication {
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val pendingRegistry = SessionPendingRegistry()
+    application {
+      module(
+        connectionRegistry = registry,
+        actionProcessor = buildProcessor(),
+        offerRegistry = offerRegistry,
+        pendingRegistry = pendingRegistry
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("session-disconnect")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-1", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      close()
+    }
+
+    withTimeout(5_000) {
+      while (registry.activeConnections().isNotEmpty()) {
+        delay(10)
+      }
+    }
+
+    assertNull(registry.findBySessionId(sessionId))
+    assertNull(offerRegistry.find(sessionId))
+    assertNull(pendingRegistry.find(sessionId))
   }
 }
