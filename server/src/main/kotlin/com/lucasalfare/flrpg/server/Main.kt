@@ -1,32 +1,18 @@
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
-import com.lucasalfare.flrpg.gamedomain.CharacterId
-import com.lucasalfare.flrpg.gamedomain.GameAction
-import com.lucasalfare.flrpg.gamedomain.GameActionProcessor
-import com.lucasalfare.flrpg.gamedomain.GameActionResult
-import com.lucasalfare.flrpg.gamedomain.GameFact
-import com.lucasalfare.flrpg.gamedomain.GameFactAudience
-import com.lucasalfare.flrpg.gamedomain.Nucleus
-import com.lucasalfare.flrpg.gamedomain.NucleusId
-import io.ktor.server.application.Application
-import io.ktor.server.application.install
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.netty.Netty
-import io.ktor.server.response.respondText
-import io.ktor.server.routing.get
-import io.ktor.server.routing.routing
-import io.ktor.server.websocket.DefaultWebSocketServerSession
-import io.ktor.server.websocket.WebSockets
-import io.ktor.server.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.close
-import io.ktor.websocket.readText
-import io.ktor.websocket.send
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
+import com.lucasalfare.flrpg.gamedomain.*
+import io.ktor.server.application.*
+import io.ktor.server.engine.*
+import io.ktor.server.netty.*
+import io.ktor.server.response.*
+import io.ktor.server.routing.*
+import io.ktor.server.websocket.*
+import io.ktor.websocket.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 interface Connection {
   val id: String
@@ -136,6 +122,268 @@ suspend fun advanceTimeAndDistribute(
   return audiences.map { it.fact }
 }
 
+suspend fun presentAvailableInteractions(
+  connection: Connection,
+  actionProcessor: GameActionProcessor,
+  offerRegistry: SessionOfferRegistry,
+  preparer: InteractionPresentationPreparer
+) {
+  val sessionId = connection.sessionId ?: return
+  val characterId = connection.characterId ?: return
+
+  val interactions = actionProcessor.availableInteractions(characterId)
+  val offerState = offerRegistry.getOrCreate(sessionId)
+  val prepared = preparer.prepare(interactions, baseRevision = offerState.revision)
+
+  offerState.replaceOffers(prepared.offered, prepared.document.revision)
+
+  val snapshot = preparer.toSnapshot(sessionId, prepared)
+  connection.send(snapshot)
+}
+
+suspend fun handleConnection(
+  connection: Connection,
+  registry: ConnectionRegistry,
+  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
+  structuralValidator: StructuralValidator = StructuralValidator(),
+  protocolValidator: ProtocolValidator = ProtocolValidator(),
+  actionProcessor: GameActionProcessor? = null,
+  offerRegistry: SessionOfferRegistry = SessionOfferRegistry(),
+  presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer()
+) {
+  registry.register(connection)
+
+  var sequenceTracker: SessionSequenceTracker? = null
+
+  try {
+    while (true) {
+      val message = connection.receive() ?: break
+
+      if (structuralValidator.validate(message) !is ValidationResult.Valid) {
+        continue
+      }
+
+      val currentSessionId = connection.sessionId
+
+      if (currentSessionId == null) {
+        if (protocolValidator.validateSessionState(
+            SessionState.NON_EXISTENT, message
+          ) !is ValidationResult.Valid
+        ) {
+          continue
+        }
+
+        if (message is ClientHello) {
+          val replyMessageId = MessageId(UUID.randomUUID().toString())
+
+          val (_, response) = synchronized(
+            sessionLifecycleHandler
+          ) {
+            sessionLifecycleHandler.processHello(
+              message, replyMessageId
+            )
+          }
+
+          if (response is ServerWelcome) {
+            connection.sessionId = response.metadata.sessionId
+
+            connection.characterId = CharacterId(UUID.randomUUID().toString())
+
+            sequenceTracker = SessionSequenceTracker(
+              response.metadata.sessionId
+            )
+          }
+
+          connection.send(response)
+
+          if (response is ServerWelcome && actionProcessor != null) {
+            presentAvailableInteractions(
+              connection = connection,
+              actionProcessor = actionProcessor,
+              offerRegistry = offerRegistry,
+              preparer = presentationPreparer
+            )
+          }
+        }
+      } else {
+        if (protocolValidator.validateSessionState(
+            SessionState.ESTABLISHED, message
+          ) !is ValidationResult.Valid
+        ) {
+          continue
+        }
+
+        if (message.sessionId != currentSessionId) {
+          continue
+        }
+
+        val status = sequenceTracker?.processInbound(message)
+
+        if (status != null && !status.isAccepted) {
+          continue
+        }
+
+        if (message is ClientAction && actionProcessor != null) {
+          val characterId = registry.findCharacterIdBySessionId(
+            currentSessionId
+          )
+
+          if (characterId != null) {
+            val gameAction = GameAction(
+              name = message.actionId, actorId = characterId, arguments = message.parameters
+            )
+
+            val execution = actionProcessor.processWithAudiences(
+              gameAction
+            )
+
+            val result = execution.result
+
+            val correlationId = CorrelationId(message.metadata.messageId)
+
+            val responseMessage = when (result) {
+              is GameActionResult.Success -> {
+                val protocolFacts = result.facts.map { fact ->
+                  ProtocolFact(
+                    name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
+                      value?.toString() ?: ""
+                    })
+                }
+
+                ServerCompleted(
+                  metadata = MessageMetadata(
+                    messageId = MessageId(
+                      UUID.randomUUID().toString()
+                    ), sessionId = currentSessionId, sequence = Sequence.ZERO, correlationId = correlationId
+                  ), facts = protocolFacts
+                )
+              }
+
+              is GameActionResult.Rejected -> {
+                ServerRejected(
+                  metadata = MessageMetadata(
+                    messageId = MessageId(
+                      UUID.randomUUID().toString()
+                    ), sessionId = currentSessionId, sequence = Sequence.ZERO, correlationId = correlationId
+                  ), reason = result.reason
+                )
+              }
+            }
+
+            connection.send(responseMessage)
+
+            if (result is GameActionResult.Success) {
+              distributeAudiences(
+                audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
+              )
+
+              presentAvailableInteractions(
+                connection = connection,
+                actionProcessor = actionProcessor,
+                offerRegistry = offerRegistry,
+                preparer = presentationPreparer
+              )
+            }
+          }
+        }
+      }
+    }
+  } catch (_: Exception) {
+    // Connection failures terminate this connection.
+  } finally {
+    runCatching {
+      connection.close()
+    }
+
+    connection.sessionId?.let { offerRegistry.remove(it) }
+    registry.unregister(connection.id)
+  }
+}
+
+class KtorConnection(
+  override val id: String = UUID.randomUUID().toString(),
+  override var sessionId: SessionId? = null,
+  override var characterId: CharacterId? = null,
+  private val session: DefaultWebSocketServerSession
+) : Connection {
+  private val sendMutex = Mutex()
+
+  override suspend fun send(message: ServerMessage) {
+    runCatching {
+      sendMutex.withLock {
+        session.send(message.toJson())
+      }
+    }
+  }
+
+  override suspend fun receive(): ClientMessage? {
+    try {
+      for (frame in session.incoming) {
+        if (frame is Frame.Text) {
+          val text = frame.readText()
+
+          val protocolMessage = runCatching {
+            text.toProtocolMessage<ProtocolMessage>()
+          }.getOrNull()
+
+          if (protocolMessage is ClientMessage) {
+            return protocolMessage
+          }
+        }
+      }
+    } catch (_: Exception) {
+      return null
+    }
+
+    return null
+  }
+
+  override suspend fun close() {
+    runCatching {
+      session.close()
+    }
+  }
+}
+
+fun main() {
+  embeddedServer(
+    Netty, port = 8080, module = Application::module
+  ).start(wait = true)
+}
+
+fun Application.module(
+  connectionRegistry: ConnectionRegistry = ConnectionRegistry(),
+  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
+  actionProcessor: GameActionProcessor? = null,
+  offerRegistry: SessionOfferRegistry = SessionOfferRegistry(),
+  presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer()
+) {
+  val activeActionProcessor = actionProcessor ?: GameActionProcessor(
+    Nucleus(NucleusId("main_nucleus"))
+  )
+
+  install(WebSockets)
+
+  routing {
+    get("/health") {
+      call.respondText("OK")
+    }
+
+    webSocket("/game") {
+      val connection = KtorConnection(session = this)
+
+      handleConnection(
+        connection = connection,
+        registry = connectionRegistry,
+        sessionLifecycleHandler = sessionLifecycleHandler,
+        actionProcessor = activeActionProcessor,
+        offerRegistry = offerRegistry,
+        presentationPreparer = presentationPreparer
+      )
+    }
+  }
+}
+
 fun interface ShortcutAssigner {
   fun assign(choices: List<Choice>): List<Choice>
 }
@@ -235,222 +483,96 @@ class FixedShortcutAssigner(
   }
 }
 
-suspend fun handleConnection(
-  connection: Connection,
-  registry: ConnectionRegistry,
-  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
-  structuralValidator: StructuralValidator = StructuralValidator(),
-  protocolValidator: ProtocolValidator = ProtocolValidator(),
-  actionProcessor: GameActionProcessor? = null
+data class OfferedOption(
+  val choiceId: String, val interaction: Interaction
+)
+
+data class PreparedPresentation(
+  val choices: List<Choice>, val offered: List<OfferedOption>, val document: PresentationDocument
+)
+
+class SessionOfferState {
+  @Volatile
+  var revision: Revision = Revision.ZERO
+    private set
+
+  private val offeredByChoiceId = ConcurrentHashMap<String, Interaction>()
+
+  fun replaceOffers(offered: List<OfferedOption>, newRevision: Revision) {
+    offeredByChoiceId.clear()
+    for (option in offered) {
+      offeredByChoiceId[option.choiceId] = option.interaction
+    }
+    revision = newRevision
+  }
+
+  fun findInteraction(choiceId: String): Interaction? = offeredByChoiceId[choiceId]
+
+  fun clear() {
+    offeredByChoiceId.clear()
+    revision = Revision.ZERO
+  }
+
+  fun offeredSnapshot(): Map<String, Interaction> = offeredByChoiceId.toMap()
+}
+
+class SessionOfferRegistry {
+  private val states = ConcurrentHashMap<String, SessionOfferState>()
+
+  fun getOrCreate(sessionId: SessionId): SessionOfferState = states.getOrPut(sessionId.value) { SessionOfferState() }
+
+  fun remove(sessionId: SessionId) {
+    states.remove(sessionId.value)?.clear()
+  }
+
+  fun find(sessionId: SessionId): SessionOfferState? = states[sessionId.value]
+}
+
+class InteractionPresentationPreparer(
+  private val shortcutAssigner: ShortcutAssigner = SequentialLetterShortcutAssigner(),
+  private val choicesBlockId: BlockId = BlockId("available_interactions")
 ) {
-  registry.register(connection)
 
-  var sequenceTracker: SessionSequenceTracker? = null
-
-  try {
-    while (true) {
-      val message = connection.receive() ?: break
-
-      if (structuralValidator.validate(message) !is ValidationResult.Valid) {
-        continue
-      }
-
-      val currentSessionId = connection.sessionId
-
-      if (currentSessionId == null) {
-        if (protocolValidator.validateSessionState(
-            SessionState.NON_EXISTENT, message
-          ) !is ValidationResult.Valid
-        ) {
-          continue
-        }
-
-        if (message is ClientHello) {
-          val replyMessageId = MessageId(UUID.randomUUID().toString())
-
-          val (_, response) = synchronized(
-            sessionLifecycleHandler
-          ) {
-            sessionLifecycleHandler.processHello(
-              message, replyMessageId
-            )
-          }
-
-          if (response is ServerWelcome) {
-            connection.sessionId = response.metadata.sessionId
-
-            connection.characterId = CharacterId(UUID.randomUUID().toString())
-
-            sequenceTracker = SessionSequenceTracker(
-              response.metadata.sessionId
-            )
-          }
-
-          connection.send(response)
-        }
-      } else {
-        if (protocolValidator.validateSessionState(
-            SessionState.ESTABLISHED, message
-          ) !is ValidationResult.Valid
-        ) {
-          continue
-        }
-
-        if (message.sessionId != currentSessionId) {
-          continue
-        }
-
-        val status = sequenceTracker?.processInbound(message)
-
-        if (status != null && !status.isAccepted) {
-          continue
-        }
-
-        if (message is ClientAction && actionProcessor != null) {
-          val characterId = registry.findCharacterIdBySessionId(
-            currentSessionId
-          )
-
-          if (characterId != null) {
-            val gameAction = GameAction(
-              name = message.actionId, actorId = characterId, arguments = message.parameters
-            )
-
-            val execution = actionProcessor.processWithAudiences(
-              gameAction
-            )
-
-            val result = execution.result
-
-            val correlationId = CorrelationId(message.metadata.messageId)
-
-            val responseMessage = when (result) {
-              is GameActionResult.Success -> {
-                val protocolFacts = result.facts.map { fact ->
-                  ProtocolFact(
-                    name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
-                      value?.toString() ?: ""
-                    })
-                }
-
-                ServerCompleted(
-                  metadata = MessageMetadata(
-                    messageId = MessageId(
-                      UUID.randomUUID().toString()
-                    ), sessionId = currentSessionId, sequence = Sequence.ZERO, correlationId = correlationId
-                  ), facts = protocolFacts
-                )
-              }
-
-              is GameActionResult.Rejected -> {
-                ServerRejected(
-                  metadata = MessageMetadata(
-                    messageId = MessageId(
-                      UUID.randomUUID().toString()
-                    ), sessionId = currentSessionId, sequence = Sequence.ZERO, correlationId = correlationId
-                  ), reason = result.reason
-                )
-              }
-            }
-
-            connection.send(responseMessage)
-
-            if (result is GameActionResult.Success) {
-              distributeAudiences(
-                audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
-              )
-            }
-          }
-        }
-      }
-    }
-  } catch (_: Exception) {
-    // Connection failures terminate this connection.
-  } finally {
-    runCatching {
-      connection.close()
-    }
-
-    registry.unregister(connection.id)
-  }
-}
-
-class KtorConnection(
-  override val id: String = UUID.randomUUID().toString(),
-  override var sessionId: SessionId? = null,
-  override var characterId: CharacterId? = null,
-  private val session: DefaultWebSocketServerSession
-) : Connection {
-  private val sendMutex = Mutex()
-
-  override suspend fun send(message: ServerMessage) {
-    runCatching {
-      sendMutex.withLock {
-        session.send(message.toJson())
-      }
-    }
-  }
-
-  override suspend fun receive(): ClientMessage? {
-    try {
-      for (frame in session.incoming) {
-        if (frame is Frame.Text) {
-          val text = frame.readText()
-
-          val protocolMessage = runCatching {
-            text.toProtocolMessage<ProtocolMessage>()
-          }.getOrNull()
-
-          if (protocolMessage is ClientMessage) {
-            return protocolMessage
-          }
-        }
-      }
-    } catch (_: Exception) {
-      return null
-    }
-
-    return null
-  }
-
-  override suspend fun close() {
-    runCatching {
-      session.close()
-    }
-  }
-}
-
-fun main() {
-  embeddedServer(
-    Netty, port = 8080, module = Application::module
-  ).start(wait = true)
-}
-
-fun Application.module(
-  connectionRegistry: ConnectionRegistry = ConnectionRegistry(),
-  sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
-  actionProcessor: GameActionProcessor? = null
-) {
-  val activeActionProcessor = actionProcessor ?: GameActionProcessor(
-    Nucleus(NucleusId("main_nucleus"))
-  )
-
-  install(WebSockets)
-
-  routing {
-    get("/health") {
-      call.respondText("OK")
-    }
-
-    webSocket("/game") {
-      val connection = KtorConnection(session = this)
-
-      handleConnection(
-        connection = connection,
-        registry = connectionRegistry,
-        sessionLifecycleHandler = sessionLifecycleHandler,
-        actionProcessor = activeActionProcessor
+  fun prepare(interactions: List<Interaction>, baseRevision: Revision = Revision.ZERO): PreparedPresentation {
+    val offered = interactions.map { interaction ->
+      OfferedOption(
+        choiceId = selectionIdFor(interaction), interaction = interaction
       )
     }
+
+    val rawChoices = offered.map { option ->
+      Choice(
+        id = option.choiceId, text = option.interaction.label, shortcut = null, enabled = true
+      )
+    }
+
+    val choices = shortcutAssigner.assign(rawChoices)
+    val newRevision = baseRevision.next()
+    val document = PresentationDocument(
+      revision = newRevision, blocks = listOf(
+        PresentationBlock(
+          id = choicesBlockId,
+          content = BlockContent.Choices(choices = choices),
+          title = "Available actions",
+          region = PresentationRegion.MAIN
+        )
+      )
+    )
+
+    return PreparedPresentation(
+      choices = choices, offered = offered, document = document
+    )
   }
+
+  fun toSnapshot(
+    sessionId: SessionId, prepared: PreparedPresentation, sequence: Sequence = Sequence.ZERO
+  ): PresentationSnapshot {
+    return PresentationSnapshot(
+      metadata = MessageMetadata(
+        messageId = MessageId(UUID.randomUUID().toString()), sessionId = sessionId, sequence = sequence
+      ), document = prepared.document
+    )
+  }
+
+  private fun selectionIdFor(interaction: Interaction): String = "opt_${interaction.id.value}"
 }

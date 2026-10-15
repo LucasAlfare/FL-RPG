@@ -49,7 +49,7 @@ class GameActionProcessorTest {
 
     val result = processor.process(action)
     assertTrue(result is GameActionResult.Rejected)
-    assertEquals("Unknown action: unknown_action", (result as GameActionResult.Rejected).reason)
+    assertEquals("Unknown action: unknown_action", result.reason)
   }
 
   @Test

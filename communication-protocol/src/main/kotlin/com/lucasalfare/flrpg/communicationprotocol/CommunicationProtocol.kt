@@ -2,10 +2,10 @@
 
 package com.lucasalfare.flrpg.communicationprotocol
 
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.util.concurrent.ConcurrentHashMap
 
 val ProtocolJson = Json {
   ignoreUnknownKeys = true

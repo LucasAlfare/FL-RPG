@@ -1,43 +1,16 @@
-// TOTALMENTE temporário com dados fake.
 package com.lucasalfare.flrpg.client
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -45,43 +18,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
-import com.lucasalfare.flrpg.communicationprotocol.BlockContent
-import com.lucasalfare.flrpg.communicationprotocol.ClientAction
-import com.lucasalfare.flrpg.communicationprotocol.ClientHello
-import com.lucasalfare.flrpg.communicationprotocol.CorrelationId
-import com.lucasalfare.flrpg.communicationprotocol.FeedOrdering
-import com.lucasalfare.flrpg.communicationprotocol.MessageId
-import com.lucasalfare.flrpg.communicationprotocol.MessageMetadata
-import com.lucasalfare.flrpg.communicationprotocol.PresentationDocument
-import com.lucasalfare.flrpg.communicationprotocol.PresentationPatch
-import com.lucasalfare.flrpg.communicationprotocol.PresentationRegion
-import com.lucasalfare.flrpg.communicationprotocol.PresentationSnapshot
-import com.lucasalfare.flrpg.communicationprotocol.ProtocolMessage
-import com.lucasalfare.flrpg.communicationprotocol.ServerCompleted
-import com.lucasalfare.flrpg.communicationprotocol.ServerFailed
-import com.lucasalfare.flrpg.communicationprotocol.ServerMessage
-import com.lucasalfare.flrpg.communicationprotocol.ServerProtocolError
-import com.lucasalfare.flrpg.communicationprotocol.ServerReject
-import com.lucasalfare.flrpg.communicationprotocol.ServerRejected
-import com.lucasalfare.flrpg.communicationprotocol.ServerWelcome
-import com.lucasalfare.flrpg.communicationprotocol.SessionId
-import com.lucasalfare.flrpg.communicationprotocol.TextStyle as ProtocolTextStyle
-import com.lucasalfare.flrpg.communicationprotocol.applyPatch
-import com.lucasalfare.flrpg.communicationprotocol.toJson
-import com.lucasalfare.flrpg.communicationprotocol.toProtocolMessage
-import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
-import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
-import io.ktor.client.plugins.websocket.WebSockets
-import io.ktor.client.plugins.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
+import com.lucasalfare.flrpg.communicationprotocol.*
+import com.lucasalfare.flrpg.communicationprotocol.Sequence.Companion.ZERO
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.websocket.*
+import io.ktor.websocket.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.util.UUID
-import com.lucasalfare.flrpg.communicationprotocol.Sequence
-import com.lucasalfare.flrpg.communicationprotocol.Sequence.Companion.ZERO
+import java.util.*
+import com.lucasalfare.flrpg.communicationprotocol.TextStyle as ProtocolTextStyle
 
 class ClientConnection(
   private val state: ClientPresentationState, private val serverUrl: String = "ws://localhost:8080/game"
@@ -437,7 +384,7 @@ private fun PresentationScreen(document: PresentationDocument, theme: TerminalTh
 @Composable
 private fun PresentationRegionPane(
   label: String,
-  blocks: List<com.lucasalfare.flrpg.communicationprotocol.PresentationBlock>,
+  blocks: List<PresentationBlock>,
   theme: TerminalTheme,
   modifier: Modifier = Modifier,
 ) {

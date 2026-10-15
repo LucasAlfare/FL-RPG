@@ -2,17 +2,7 @@
 
 package com.lucasalfare.flrpg.gamedomain
 
-import com.lucasalfare.flworld.UnweightedPathFinder
-import com.lucasalfare.flworld.World
-import com.lucasalfare.flworld.WorldConnection
-import com.lucasalfare.flworld.WorldConnectionId
-import com.lucasalfare.flworld.WorldDuration
-import com.lucasalfare.flworld.WorldEntity
-import com.lucasalfare.flworld.WorldEntityId
-import com.lucasalfare.flworld.WorldId
-import com.lucasalfare.flworld.WorldLocation
-import com.lucasalfare.flworld.WorldLocationId
-import com.lucasalfare.flworld.WorldMovement
+import com.lucasalfare.flworld.*
 
 @JvmInline
 value class CharacterId(val value: String)
