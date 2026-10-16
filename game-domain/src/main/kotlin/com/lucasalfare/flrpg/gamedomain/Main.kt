@@ -114,7 +114,8 @@ data class Interaction(
   val label: String,
   val actionName: String? = null,
   val fixedArguments: Map<String, Any?> = emptyMap(),
-  val requiredArgumentNames: List<String> = emptyList()
+  val requiredArgumentNames: List<String> = emptyList(),
+  val children: List<Interaction> = emptyList()
 ) {
   init {
     require(label.isNotBlank()) { "Interaction label must not be blank." }
@@ -124,6 +125,20 @@ data class Interaction(
     require(requiredArgumentNames.all { it.isNotBlank() }) {
       "Required argument names must not be blank."
     }
+    require(children.map { it.id }.toSet().size == children.size) {
+      "Child interaction identifiers must be unique within a menu."
+    }
+    if (children.isNotEmpty()) {
+      require(actionName == null) {
+        "A menu interaction must not declare a game action."
+      }
+      require(fixedArguments.isEmpty()) {
+        "A menu interaction must not declare fixed arguments."
+      }
+      require(requiredArgumentNames.isEmpty()) {
+        "A menu interaction must not declare required argument names."
+      }
+    }
   }
 
   val needsAdditionalArguments: Boolean
@@ -131,6 +146,12 @@ data class Interaction(
 
   val isImmediate: Boolean
     get() = requiredArgumentNames.isEmpty()
+
+  val isMenu: Boolean
+    get() = children.isNotEmpty()
+
+  val isExecutable: Boolean
+    get() = !isMenu && actionName != null
 }
 
 fun interface InteractionProvider {
