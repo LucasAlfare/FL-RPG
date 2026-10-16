@@ -344,7 +344,7 @@ class ServerTests {
     assertEquals(1, connection.sentMessages.size)
     val response = connection.sentMessages.single()
     assertTrue(response is ServerReject)
-    assertEquals(RejectionReason.INCOMPATIBLE_VERSION, (response as ServerReject).reason)
+    assertEquals(RejectionReason.INCOMPATIBLE_VERSION, response.reason)
     assertNull(registry.findById("conn-1"))
   }
 

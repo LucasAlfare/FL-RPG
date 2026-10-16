@@ -8,6 +8,5 @@ dependencies {
   api(libs.fl.world)
   api(libs.fl.economy)
 
-  // Agora você tem Coroutines nativo no domain sem gambiarra
   implementation(libs.kotlinx.coroutines.core)
 }
