@@ -31,6 +31,46 @@ value class SimulationSeconds(val value: Long) {
   }
 }
 
+@JvmInline
+value class ActivityId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "ActivityId must not be blank." }
+  }
+}
+
+enum class ActivityType {
+  MOVEMENT
+}
+
+enum class ActivityStatus {
+  RUNNING, COMPLETED, CANCELLED, INTERRUPTED, FAILED
+}
+
+enum class ActivityMode {
+  BLOCKING, NON_BLOCKING
+}
+
+data class Activity(
+  val id: ActivityId,
+  val characterId: CharacterId,
+  val type: ActivityType,
+  val description: String,
+  val mode: ActivityMode,
+  val startTime: SimulationSeconds,
+  val duration: SimulationSeconds,
+  val status: ActivityStatus = ActivityStatus.RUNNING
+) {
+  val isTerminal: Boolean
+    get() = status != ActivityStatus.RUNNING
+}
+
+interface ActivityHandler {
+  val activityType: ActivityType
+  fun progress(activity: Activity, nucleus: Nucleus): List<GameFact>
+  fun complete(activity: Activity, nucleus: Nucleus): List<GameFact>
+  fun cancel(activity: Activity, nucleus: Nucleus): List<GameFact>
+}
+
 fun calculateTravelDuration(distance: DistanceCm, speed: SpeedCmPerSecond): SimulationSeconds {
   if (distance.value == 0L) {
     return SimulationSeconds(0L)
@@ -72,6 +112,10 @@ class Nucleus(
 
   private val _connectionDistances = mutableMapOf<WorldConnectionId, DistanceCm>()
 
+  private val _activities = mutableMapOf<ActivityId, Activity>()
+
+  private val _characterActiveActivities = mutableMapOf<CharacterId, ActivityId>()
+
   val characters: Set<CharacterId>
     get() = synchronized(stateLock) {
       _characters.keys.toSet()
@@ -95,6 +139,10 @@ class Nucleus(
     synchronized(stateLock) {
       world.removeEntity(WorldEntityId(characterId.value))
       _characters.remove(characterId)
+      val activeActivityId = _characterActiveActivities.remove(characterId)
+      if (activeActivityId != null) {
+        _activities.remove(activeActivityId)
+      }
     }
   }
 
@@ -183,6 +231,55 @@ class Nucleus(
       _characters[characterId] = character.copy(attributes = updatedAttributes)
     }
   }
+
+  fun registerActivity(activity: Activity): Boolean = synchronized(stateLock) {
+    val existingId = _characterActiveActivities[activity.characterId]
+    if (existingId != null) {
+      val existing = _activities[existingId]
+      if (existing != null && !existing.isTerminal) {
+        return false
+      }
+    }
+    _activities[activity.id] = activity
+    if (!activity.isTerminal) {
+      _characterActiveActivities[activity.characterId] = activity.id
+    }
+    return true
+  }
+
+  fun getActivity(activityId: ActivityId): Activity? = synchronized(stateLock) {
+    _activities[activityId]
+  }
+
+  fun getActiveActivityForCharacter(characterId: CharacterId): Activity? = synchronized(stateLock) {
+    val activityId = _characterActiveActivities[characterId] ?: return@synchronized null
+    _activities[activityId]
+  }
+
+  fun transitionActivityStatus(activityId: ActivityId, newStatus: ActivityStatus): Boolean = synchronized(stateLock) {
+    val activity = _activities[activityId] ?: return false
+    if (activity.isTerminal) {
+      return false
+    }
+    val updated = activity.copy(status = newStatus)
+    _activities[activityId] = updated
+    if (updated.isTerminal) {
+      if (_characterActiveActivities[activity.characterId] == activityId) {
+        _characterActiveActivities.remove(activity.characterId)
+      }
+    }
+    return true
+  }
+
+  fun getActivityProgress(activityId: ActivityId, currentSimulationTime: SimulationSeconds): Double =
+    synchronized(stateLock) {
+      val activity = _activities[activityId] ?: return 0.0
+      if (activity.duration.value == 0L) return 1.0
+      val elapsed = currentSimulationTime.value - activity.startTime.value
+      if (elapsed <= 0L) return 0.0
+      if (elapsed >= activity.duration.value) return 1.0
+      return elapsed.toDouble() / activity.duration.value.toDouble()
+    }
 
   private fun registerLocationNodeLocked(locationId: String) {
     val id = WorldLocationId(locationId)
