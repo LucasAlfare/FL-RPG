@@ -258,7 +258,6 @@ class ClientPresentationState {
       is ServerRejected -> connectionMessage = "SERVIDOR REJEITOU · ${message.reason}"
       is ServerFailed -> connectionMessage = "FALHA NO SERVIDOR · ${message.error}"
       is ServerProtocolError -> connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
-      else -> Unit
     }
   }
 

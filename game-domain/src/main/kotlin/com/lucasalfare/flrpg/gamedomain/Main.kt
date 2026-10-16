@@ -23,6 +23,10 @@ class Nucleus(
 
   private val _locationDisplayNames = mutableMapOf<WorldLocationId, String>()
 
+  private val _connectionDistances = mutableMapOf<WorldConnectionId, Long>()
+
+  private val _characterSpeeds = mutableMapOf<CharacterId, Long>()
+
   val characters: Set<CharacterId>
     get() = synchronized(stateLock) {
       _characters.toSet()
@@ -31,6 +35,7 @@ class Nucleus(
   fun registerCharacter(characterId: CharacterId) {
     synchronized(stateLock) {
       _characters.add(characterId)
+      _characterSpeeds.putIfAbsent(characterId, DEFAULT_SPEED)
     }
   }
 
@@ -38,6 +43,7 @@ class Nucleus(
     synchronized(stateLock) {
       world.removeEntity(WorldEntityId(characterId.value))
       _characters.remove(characterId)
+      _characterSpeeds.remove(characterId)
     }
   }
 
@@ -69,8 +75,10 @@ class Nucleus(
   fun getLocationDisplayName(locationId: String): String? = getLocationDisplayName(WorldLocationId(locationId))
 
   fun connectLocations(
-    fromId: String, toId: String, connectionId: String = "conn_${fromId}_$toId"
+    fromId: String, toId: String, connectionId: String = "conn_${fromId}_$toId", distance: Long = DEFAULT_DISTANCE
   ) {
+    require(distance > 0L) { "Connection distance must be positive." }
+
     synchronized(stateLock) {
       registerLocationNodeLocked(fromId)
       registerLocationNodeLocked(toId)
@@ -80,6 +88,24 @@ class Nucleus(
       )
 
       world.graph.registerConnection(connection)
+      _connectionDistances[connection.id] = distance
+    }
+  }
+
+  fun getConnectionDistance(connectionId: WorldConnectionId): Long = synchronized(stateLock) {
+    _connectionDistances[connectionId] ?: DEFAULT_DISTANCE
+  }
+
+  fun getConnectionDistance(connectionId: String): Long = getConnectionDistance(WorldConnectionId(connectionId))
+
+  fun getCharacterSpeed(characterId: CharacterId): Long = synchronized(stateLock) {
+    _characterSpeeds[characterId] ?: DEFAULT_SPEED
+  }
+
+  fun setCharacterSpeed(characterId: CharacterId, speed: Long) {
+    require(speed > 0L) { "Character speed must be positive." }
+    synchronized(stateLock) {
+      _characterSpeeds[characterId] = speed
     }
   }
 
@@ -91,6 +117,11 @@ class Nucleus(
     }
 
     _locationDisplayNames.putIfAbsent(id, locationId)
+  }
+
+  companion object {
+    const val DEFAULT_DISTANCE: Long = 1L
+    const val DEFAULT_SPEED: Long = 1L
   }
 }
 
@@ -304,15 +335,25 @@ class MoveHandler : GameActionHandler {
       )
     }
 
-    val path = UnweightedPathFinder().findPath(
+    val costEvaluator = WorldNavigationCost { connection, _ ->
+      nucleus.getConnectionDistance(connection.id).toDouble()
+    }
+
+    val path = DijkstraPathFinder(costEvaluator).findPath(
       graph = nucleus.world.graph, from = currentLocationId, to = destinationId
     ) ?: return GameActionResult.Rejected(
       "No valid path to location '${destinationId.value}'"
     )
 
-    val duration = WorldDuration(
-      path.connections.size.coerceAtLeast(1).toLong()
-    )
+    val totalDistance = path.connections.sumOf { connection ->
+      nucleus.getConnectionDistance(connection.id)
+    }
+
+    val speed = nucleus.getCharacterSpeed(action.actorId).coerceAtLeast(Nucleus.DEFAULT_SPEED)
+
+    val durationTicks = ((totalDistance + speed - 1L) / speed).coerceAtLeast(1L)
+
+    val duration = WorldDuration(durationTicks)
 
     val startInstant = nucleus.world.clock.currentInstant
 
@@ -519,12 +560,16 @@ fun buildDevelopmentNucleus(
   nucleus.registerLocation("spawn", "Starting Point")
   nucleus.registerLocation("path", "Winding Path")
   nucleus.registerLocation("plaza", "Central Plaza")
+  nucleus.registerLocation("city", "Distant City")
 
-  nucleus.connectLocations("spawn", "path")
-  nucleus.connectLocations("path", "spawn")
+  nucleus.connectLocations("spawn", "path", distance = 1L)
+  nucleus.connectLocations("path", "spawn", distance = 1L)
 
-  nucleus.connectLocations("path", "plaza")
-  nucleus.connectLocations("plaza", "path")
+  nucleus.connectLocations("path", "plaza", distance = 1L)
+  nucleus.connectLocations("plaza", "path", distance = 1L)
+
+  nucleus.connectLocations("plaza", "city", distance = 30L)
+  nucleus.connectLocations("city", "plaza", distance = 30L)
 
   return nucleus
 }

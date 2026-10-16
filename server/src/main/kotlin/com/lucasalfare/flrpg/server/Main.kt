@@ -17,7 +17,7 @@ import kotlinx.coroutines.sync.withLock
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
-private const val SIMULATION_TICK_INTERVAL_MS: Long = 1_000L
+private const val SIMULATION_TICK_INTERVAL_MS: Long = 1_000 * 1L
 private const val SIMULATION_TICKS_PER_INTERVAL: Long = 1L
 
 private val DefaultPreferredInteractionShortcuts: Map<String, String> = mapOf(
@@ -953,7 +953,7 @@ fun Application.module(
   pendingRegistry: SessionPendingRegistry = SessionPendingRegistry()
 ) {
   val activeActionProcessor = actionProcessor ?: GameActionProcessor(
-    Nucleus(NucleusId("main_nucleus"))
+    buildDevelopmentNucleus(NucleusId("main_nucleus"))
   )
 
   install(WebSockets)
