@@ -14,6 +14,10 @@ import kotlinx.coroutines.sync.withLock
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
+private val DefaultPreferredInteractionShortcuts: Map<String, String> = mapOf(
+  "move" to "M"
+)
+
 interface Connection {
   val id: String
   var sessionId: SessionId?
@@ -235,7 +239,8 @@ class SessionOfferRegistry {
 
 class InteractionPresentationPreparer(
   private val shortcutAssigner: ShortcutAssigner = SequentialLetterShortcutAssigner(),
-  private val choicesBlockId: BlockId = BlockId("available_interactions")
+  private val choicesBlockId: BlockId = BlockId("available_interactions"),
+  private val preferredShortcutsByInteractionId: Map<String, String> = emptyMap()
 ) {
 
   fun prepare(interactions: List<Interaction>, baseRevision: Revision = Revision.ZERO): PreparedPresentation {
@@ -247,7 +252,10 @@ class InteractionPresentationPreparer(
 
     val rawChoices = offered.map { option ->
       Choice(
-        id = option.choiceId, text = option.interaction.label, shortcut = null, enabled = true
+        id = option.choiceId,
+        text = option.interaction.label,
+        shortcut = preferredShortcutsByInteractionId[option.interaction.id.value],
+        enabled = true
       )
     }
 
@@ -376,7 +384,9 @@ suspend fun handleConnection(
   protocolValidator: ProtocolValidator = ProtocolValidator(),
   actionProcessor: GameActionProcessor? = null,
   offerRegistry: SessionOfferRegistry = SessionOfferRegistry(),
-  presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer(),
+  presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer(
+    preferredShortcutsByInteractionId = DefaultPreferredInteractionShortcuts
+  ),
   pendingRegistry: SessionPendingRegistry = SessionPendingRegistry()
 ) {
   registry.register(connection)
@@ -825,7 +835,9 @@ fun Application.module(
   sessionLifecycleHandler: SessionLifecycleHandler = SessionLifecycleHandler(),
   actionProcessor: GameActionProcessor? = null,
   offerRegistry: SessionOfferRegistry = SessionOfferRegistry(),
-  presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer(),
+  presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer(
+    preferredShortcutsByInteractionId = DefaultPreferredInteractionShortcuts
+  ),
   pendingRegistry: SessionPendingRegistry = SessionPendingRegistry()
 ) {
   val activeActionProcessor = actionProcessor ?: GameActionProcessor(
