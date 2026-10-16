@@ -84,10 +84,12 @@ class ClientConnection(
       return
     }
 
+    val metadata = nextMetadata()
     val selection = ClientSelection(
-      metadata = nextMetadata(), choiceId = choiceId
+      metadata = metadata, choiceId = choiceId
     )
 
+    state.activeOperationMessageId = metadata.messageId
     state.connectionMessage = "A ENVIAR SELEÇÃO · $choiceId (seq ${selection.sequence.value})"
 
     currentSession.launch {
@@ -106,8 +108,9 @@ class ClientConnection(
       return
     }
 
+    val metadata = nextMetadata()
     val textCommand = ClientTextCommand(
-      metadata = nextMetadata(), rawText = rawText
+      metadata = metadata, rawText = rawText
     )
 
     state.connectionMessage = "A ENVIAR COMANDO · $rawText (seq ${textCommand.sequence.value})"
@@ -115,6 +118,28 @@ class ClientConnection(
     currentSession.launch {
       try {
         currentSession.send(Frame.Text(textCommand.toJson()))
+      } catch (e: Exception) {
+        state.connectionMessage = "FALHA NO ENVIO · ${e.message}"
+      }
+    }
+  }
+
+  fun sendCancel(targetMessageId: MessageId) {
+    val currentSession = session
+    if (currentSession == null || !handshakeDone) {
+      state.connectionMessage = "NÃO PRONTO · handshake pendente"
+      return
+    }
+
+    val cancelMessage = ClientCancel(
+      metadata = nextMetadata(), targetMessageId = targetMessageId
+    )
+
+    state.connectionMessage = "A ENVIAR CANCELAMENTO · alvo ${targetMessageId.value}"
+
+    currentSession.launch {
+      try {
+        currentSession.send(Frame.Text(cancelMessage.toJson()))
       } catch (e: Exception) {
         state.connectionMessage = "FALHA NO ENVIO · ${e.message}"
       }
@@ -185,6 +210,8 @@ class ClientPresentationState {
 
   private val clientHistoryBlockId: BlockId = BlockId("client_recent_history")
 
+  var activeOperationMessageId: MessageId? by mutableStateOf(null)
+
   val document: PresentationDocument
     get() {
       val base = serverDocument
@@ -221,6 +248,7 @@ class ClientPresentationState {
 
       is ServerReject -> {
         connectionMessage = "REJEITADO · ${message.reason}"
+        activeOperationMessageId = null
       }
 
       is ServerAccepted -> {
@@ -232,6 +260,9 @@ class ClientPresentationState {
         connectionMessage = "CONCLUÍDO · factos: $factsSummary"
         message.facts.forEach { fact ->
           appendHistory(fact.name, fact.arguments)
+          if (fact.name == "character_movement_completed" || fact.name == "character_movement_interrupted" || fact.name == "activity_cancelled") {
+            activeOperationMessageId = null
+          }
         }
       }
 
@@ -255,8 +286,16 @@ class ClientPresentationState {
         }
       }
 
-      is ServerRejected -> connectionMessage = "SERVIDOR REJEITOU · ${message.reason}"
-      is ServerFailed -> connectionMessage = "FALHA NO SERVIDOR · ${message.error}"
+      is ServerRejected -> {
+        connectionMessage = "SERVIDOR REJEITOU · ${message.reason}"
+        activeOperationMessageId = null
+      }
+
+      is ServerFailed -> {
+        connectionMessage = "FALHA NO SERVIDOR · ${message.error}"
+        activeOperationMessageId = null
+      }
+
       is ServerProtocolError -> connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
     }
   }
@@ -297,7 +336,7 @@ class ClientPresentationState {
   }
 
   fun submitCommand(
-    selectionSink: (String) -> Unit, commandSink: (String) -> Unit
+    selectionSink: (String) -> Unit, commandSink: (String) -> Unit, cancelSink: (MessageId) -> Unit
   ) {
     val command = input.trim()
     if (command.isEmpty()) return
@@ -311,7 +350,7 @@ class ClientPresentationState {
       return
     }
 
-    if (handleClientCommand(command)) {
+    if (handleClientCommand(command, cancelSink)) {
       input = ""
       return
     }
@@ -354,7 +393,7 @@ class ClientPresentationState {
       ?: activeChoices.firstOrNull { it.text.equals(input, ignoreCase = true) }
   }
 
-  private fun handleClientCommand(command: String): Boolean {
+  private fun handleClientCommand(command: String, cancelSink: (MessageId) -> Unit): Boolean {
     return when (command.uppercase()) {
       "M", "MENU" -> {
         screen = ClientScreen.MENU
@@ -370,6 +409,16 @@ class ClientPresentationState {
         darkThemeEnabled = !darkThemeEnabled
         true
       } else false
+
+      "CANCEL", "CANCELAR" -> {
+        val targetId = activeOperationMessageId
+        if (targetId != null) {
+          cancelSink(targetId)
+        } else {
+          connectionMessage = "NENHUMA ATIVIDADE ATIVA PARA CANCELAR"
+        }
+        true
+      }
 
       else -> false
     }
@@ -399,13 +448,18 @@ fun main() = application {
       val trimmed = text.trim()
       if (trimmed.isEmpty()) return@TerminalApp
       connection.sendTextCommand(trimmed)
+    }, onCancel = { targetMessageId ->
+      connection.sendCancel(targetMessageId)
     })
   }
 }
 
 @Composable
 private fun TerminalApp(
-  state: ClientPresentationState, onSelection: (String) -> Unit, onCommand: (String) -> Unit
+  state: ClientPresentationState,
+  onSelection: (String) -> Unit,
+  onCommand: (String) -> Unit,
+  onCancel: (MessageId) -> Unit
 ) {
   val theme = if (state.darkThemeEnabled) darkTheme else lightTheme
   Column(
@@ -438,7 +492,7 @@ private fun TerminalApp(
     SelectionContainer {
       Text(state.connectionMessage, color = theme.muted, fontFamily = mono, fontSize = 12.sp)
     }
-    CommandLine(state, theme, onSelection, onCommand)
+    CommandLine(state, theme, onSelection, onCommand, onCancel)
   }
 }
 
@@ -519,7 +573,11 @@ private fun PresentationBlockContent(content: BlockContent, theme: TerminalTheme
 
 @Composable
 private fun CommandLine(
-  state: ClientPresentationState, theme: TerminalTheme, onSelection: (String) -> Unit, onCommand: (String) -> Unit
+  state: ClientPresentationState,
+  theme: TerminalTheme,
+  onSelection: (String) -> Unit,
+  onCommand: (String) -> Unit,
+  onCancel: (MessageId) -> Unit
 ) {
   Row(
     Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
@@ -539,7 +597,7 @@ private fun CommandLine(
         }
       }.onKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-          state.submitCommand(onSelection, onCommand)
+          state.submitCommand(onSelection, onCommand, onCancel)
           true
         } else false
       }.focusable(),
