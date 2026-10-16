@@ -277,6 +277,55 @@ class Nucleus(
     _activities[activityId]
   }
 
+  fun cancelActivity(characterId: CharacterId, activityId: ActivityId): GameActionResult = synchronized(stateLock) {
+    val activity = _activities[activityId] ?: return GameActionResult.Rejected("Activity not found.")
+
+    if (activity.characterId != characterId) {
+      return GameActionResult.Rejected("Character '${characterId.value}' does not own activity '${activityId.value}'.")
+    }
+
+    if (activity.isTerminal) {
+      return GameActionResult.Rejected("Activity '${activityId.value}' is already terminated.")
+    }
+
+    val entityId = WorldEntityId(characterId.value)
+    val facts = mutableListOf<GameFact>()
+
+    if (activity.type == ActivityType.MOVEMENT) {
+      val movement = world.getMovement(entityId)
+      if (movement != null && movement.isInProgress) {
+        world.stopMovement(entityId)
+        val currentLocationId = world.state.getLocation(entityId) ?: movement.origin
+        val originName = getLocationDisplayName(movement.origin) ?: movement.origin.value
+        val currentName = getLocationDisplayName(currentLocationId) ?: currentLocationId.value
+
+        facts.add(
+          GameFact(
+            name = "character_movement_interrupted", arguments = mapOf(
+              "characterId" to characterId.value,
+              "originLocationId" to movement.origin.value,
+              "locationId" to currentLocationId.value,
+              "originLocationName" to originName,
+              "locationName" to currentName
+            )
+          )
+        )
+      }
+    }
+
+    transitionActivityStatus(activityId, ActivityStatus.CANCELLED)
+
+    facts.add(
+      GameFact(
+        name = "activity_cancelled", arguments = mapOf(
+          "characterId" to characterId.value, "activityId" to activityId.value, "type" to activity.type.name
+        )
+      )
+    )
+
+    GameActionResult.Success(facts = facts)
+  }
+
   fun transitionActivityStatus(activityId: ActivityId, newStatus: ActivityStatus): Boolean = synchronized(stateLock) {
     val activity = _activities[activityId] ?: return false
     if (activity.isTerminal) {
@@ -502,6 +551,17 @@ class EnterWorldHandler : GameActionHandler {
   }
 }
 
+class CancelActivityHandler : GameActionHandler {
+  override val actionName: String = "cancel_activity"
+
+  override fun execute(action: GameAction, nucleus: Nucleus): GameActionResult {
+    val activityIdValue = action.arguments["activityId"] as? String ?: return GameActionResult.Rejected(
+      "Missing activityId argument"
+    )
+    return nucleus.cancelActivity(action.actorId, ActivityId(activityIdValue))
+  }
+}
+
 class MoveHandler : GameActionHandler {
   override val actionName: String = "move"
 
@@ -633,7 +693,7 @@ class GameActionProcessor(
 
   companion object {
     fun defaultHandlers(): List<GameActionHandler> = listOf(
-      EnterWorldHandler(), MoveHandler()
+      EnterWorldHandler(), MoveHandler(), CancelActivityHandler()
     )
   }
 
@@ -694,6 +754,13 @@ class GameActionProcessor(
   private fun processLocked(
     action: GameAction
   ): GameActionResult {
+    val activeActivity = nucleus.getActiveActivityForCharacter(action.actorId)
+    if (activeActivity != null && activeActivity.mode == ActivityMode.BLOCKING && action.name != "cancel_activity") {
+      return GameActionResult.Rejected(
+        "Character '${action.actorId.value}' is busy with a blocking activity: ${activeActivity.description}"
+      )
+    }
+
     val handler = handlerRegistry[action.name]
     if (handler != null) {
       return handler.execute(action, nucleus)
