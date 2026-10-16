@@ -21,6 +21,8 @@ class Nucleus(
 
   private val _characters = mutableSetOf<CharacterId>()
 
+  private val _locationDisplayNames = mutableMapOf<WorldLocationId, String>()
+
   val characters: Set<CharacterId>
     get() = synchronized(stateLock) {
       _characters.toSet()
@@ -53,22 +55,25 @@ class Nucleus(
     }
   }
 
-  fun registerLocation(locationId: String) {
+  fun registerLocation(locationId: String, displayName: String = locationId) {
     synchronized(stateLock) {
-      val id = WorldLocationId(locationId)
-
-      if (world.graph.getLocation(id) == null) {
-        world.graph.registerLocation(WorldLocation(id))
-      }
+      registerLocationNodeLocked(locationId)
+      _locationDisplayNames[WorldLocationId(locationId)] = displayName
     }
   }
+
+  fun getLocationDisplayName(locationId: WorldLocationId): String? = synchronized(stateLock) {
+    _locationDisplayNames[locationId]
+  }
+
+  fun getLocationDisplayName(locationId: String): String? = getLocationDisplayName(WorldLocationId(locationId))
 
   fun connectLocations(
     fromId: String, toId: String, connectionId: String = "conn_${fromId}_$toId"
   ) {
     synchronized(stateLock) {
-      registerLocation(fromId)
-      registerLocation(toId)
+      registerLocationNodeLocked(fromId)
+      registerLocationNodeLocked(toId)
 
       val connection = WorldConnection(
         id = WorldConnectionId(connectionId), from = WorldLocationId(fromId), to = WorldLocationId(toId)
@@ -76,6 +81,16 @@ class Nucleus(
 
       world.graph.registerConnection(connection)
     }
+  }
+
+  private fun registerLocationNodeLocked(locationId: String) {
+    val id = WorldLocationId(locationId)
+
+    if (world.graph.getLocation(id) == null) {
+      world.graph.registerLocation(WorldLocation(id))
+    }
+
+    _locationDisplayNames.putIfAbsent(id, locationId)
   }
 }
 
@@ -421,4 +436,22 @@ class GameActionProcessor(
       fact = fact, characterIds = findInterestedCharactersLocked(fact)
     )
   }
+}
+
+fun buildDevelopmentNucleus(
+  id: NucleusId = NucleusId("development")
+): Nucleus {
+  val nucleus = Nucleus(id)
+
+  nucleus.registerLocation("spawn", "Starting Point")
+  nucleus.registerLocation("path", "Winding Path")
+  nucleus.registerLocation("plaza", "Central Plaza")
+
+  nucleus.connectLocations("spawn", "path")
+  nucleus.connectLocations("path", "spawn")
+
+  nucleus.connectLocations("path", "plaza")
+  nucleus.connectLocations("plaza", "path")
+
+  return nucleus
 }
