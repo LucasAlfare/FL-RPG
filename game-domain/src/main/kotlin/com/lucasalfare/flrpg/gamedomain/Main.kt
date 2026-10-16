@@ -116,6 +116,8 @@ class Nucleus(
 
   private val _characterActiveActivities = mutableMapOf<CharacterId, ActivityId>()
 
+  private val _movementActivities = mutableMapOf<WorldEntityId, ActivityId>()
+
   val characters: Set<CharacterId>
     get() = synchronized(stateLock) {
       _characters.keys.toSet()
@@ -137,7 +139,9 @@ class Nucleus(
 
   fun unregisterCharacter(characterId: CharacterId) {
     synchronized(stateLock) {
-      world.removeEntity(WorldEntityId(characterId.value))
+      val entityId = WorldEntityId(characterId.value)
+      world.removeEntity(entityId)
+      _movementActivities.remove(entityId)
       _characters.remove(characterId)
       val activeActivityId = _characterActiveActivities.remove(characterId)
       if (activeActivityId != null) {
@@ -232,7 +236,24 @@ class Nucleus(
     }
   }
 
+  fun registerMovementActivity(entityId: WorldEntityId, activity: Activity): Boolean = synchronized(stateLock) {
+    val registered = registerActivityLocked(activity)
+    if (registered) {
+      _movementActivities[entityId] = activity.id
+    }
+    registered
+  }
+
+  fun getActivityForMovement(entityId: WorldEntityId): Activity? = synchronized(stateLock) {
+    val activityId = _movementActivities[entityId] ?: return@synchronized null
+    _activities[activityId]
+  }
+
   fun registerActivity(activity: Activity): Boolean = synchronized(stateLock) {
+    registerActivityLocked(activity)
+  }
+
+  private fun registerActivityLocked(activity: Activity): Boolean {
     val existingId = _characterActiveActivities[activity.characterId]
     if (existingId != null) {
       val existing = _activities[existingId]
@@ -266,6 +287,10 @@ class Nucleus(
     if (updated.isTerminal) {
       if (_characterActiveActivities[activity.characterId] == activityId) {
         _characterActiveActivities.remove(activity.characterId)
+      }
+      val entityId = WorldEntityId(activity.characterId.value)
+      if (_movementActivities[entityId] == activityId) {
+        _movementActivities.remove(entityId)
       }
     }
     return true
@@ -376,7 +401,8 @@ class DefaultInteractionProvider : InteractionProvider {
 
     val entityId = WorldEntityId(characterId.value)
 
-    if (nucleus.world.getMovement(entityId)?.isInProgress == true) {
+    val activeActivity = nucleus.getActiveActivityForCharacter(characterId)
+    if (activeActivity != null && activeActivity.mode == ActivityMode.BLOCKING) {
       return emptyList()
     }
 
@@ -411,6 +437,10 @@ sealed interface GameActionResult {
 
   data class Success(
     override val facts: List<GameFact> = emptyList()
+  ) : GameActionResult
+
+  data class ActivityStarted(
+    val activityId: ActivityId, override val facts: List<GameFact> = emptyList()
   ) : GameActionResult
 
   data class Rejected(
@@ -539,6 +569,25 @@ class MoveHandler : GameActionHandler {
       duration = duration
     )
 
+    val currentSimulationTime = SimulationSeconds(nucleus.world.clock.currentInstant.value)
+
+    val activity = Activity(
+      id = ActivityId("activity_move_${action.actorId.value}_${currentSimulationTime.value}"),
+      characterId = action.actorId,
+      type = ActivityType.MOVEMENT,
+      description = "Moving to ${nucleus.getLocationDisplayName(destinationId) ?: destinationId.value}",
+      mode = ActivityMode.BLOCKING,
+      startTime = currentSimulationTime,
+      duration = simulationDuration
+    )
+
+    val registered = nucleus.registerMovementActivity(entityId, activity)
+    if (!registered) {
+      return GameActionResult.Rejected(
+        "Character '${action.actorId.value}' already has an active activity"
+      )
+    }
+
     return try {
       nucleus.world.startMovement(movement)
 
@@ -556,10 +605,11 @@ class MoveHandler : GameActionHandler {
         )
       )
 
-      GameActionResult.Success(
-        facts = listOf(fact)
+      GameActionResult.ActivityStarted(
+        activityId = activity.id, facts = listOf(fact)
       )
     } catch (ex: Exception) {
+      nucleus.transitionActivityStatus(activity.id, ActivityStatus.FAILED)
       GameActionResult.Rejected(
         "Failed to start movement: ${ex.message}"
       )
@@ -672,6 +722,11 @@ class GameActionProcessor(
           val originName = nucleus.getLocationDisplayName(movement.origin) ?: movement.origin.value
           val destinationName = nucleus.getLocationDisplayName(movement.destination) ?: movement.destination.value
 
+          val activity = nucleus.getActivityForMovement(movement.entityId)
+          if (activity != null) {
+            nucleus.transitionActivityStatus(activity.id, ActivityStatus.COMPLETED)
+          }
+
           facts.add(
             GameFact(
               name = "character_movement_completed", arguments = mapOf(
@@ -687,6 +742,11 @@ class GameActionProcessor(
           val currentLocationId = currentLocation ?: movement.origin
           val originName = nucleus.getLocationDisplayName(movement.origin) ?: movement.origin.value
           val currentName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
+
+          val activity = nucleus.getActivityForMovement(movement.entityId)
+          if (activity != null) {
+            nucleus.transitionActivityStatus(activity.id, ActivityStatus.INTERRUPTED)
+          }
 
           facts.add(
             GameFact(
