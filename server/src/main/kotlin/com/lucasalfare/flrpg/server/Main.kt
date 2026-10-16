@@ -99,6 +99,49 @@ class SessionPendingRegistry {
   }
 }
 
+class OperationCorrelationRegistry {
+  private val messageToActivityMap = ConcurrentHashMap<String, ActivityId>()
+  private val activityToSessionMap = ConcurrentHashMap<ActivityId, SessionId>()
+
+  fun register(messageId: MessageId, activityId: ActivityId, sessionId: SessionId) {
+    messageToActivityMap[messageId.value] = activityId
+    activityToSessionMap[activityId] = sessionId
+  }
+
+  fun findActivityId(messageId: MessageId): ActivityId? = messageToActivityMap[messageId.value]
+
+  fun findSessionId(activityId: ActivityId): SessionId? = activityToSessionMap[activityId]
+
+  fun removeByActivityId(activityId: ActivityId) {
+    val sessionId = activityToSessionMap.remove(activityId)
+    if (sessionId != null) {
+      messageToActivityMap.entries.removeAll { it.value == activityId }
+    }
+  }
+
+  fun removeBySessionId(sessionId: SessionId) {
+    val removedActivities = activityToSessionMap.filterValues { sessionId == it }.keys
+    for (activityId in removedActivities) {
+      activityToSessionMap.remove(activityId)
+    }
+    messageToActivityMap.entries.removeAll { it.value in removedActivities }
+  }
+}
+
+class SessionInteractionOperationRegistry {
+  private val map = ConcurrentHashMap<String, MessageId>()
+
+  fun set(sessionId: SessionId, messageId: MessageId) {
+    map[sessionId.value] = messageId
+  }
+
+  fun find(sessionId: SessionId): MessageId? = map[sessionId.value]
+
+  fun remove(sessionId: SessionId) {
+    map.remove(sessionId.value)
+  }
+}
+
 fun interface ShortcutAssigner {
   fun assign(choices: List<Choice>): List<Choice>
 }
@@ -432,11 +475,31 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
   registry: ConnectionRegistry,
   actionProcessor: GameActionProcessor,
   offerRegistry: SessionOfferRegistry,
-  presentationPreparer: InteractionPresentationPreparer
+  presentationPreparer: InteractionPresentationPreparer,
+  correlationRegistry: OperationCorrelationRegistry
 ): List<GameFact> {
   val audiences = actionProcessor.advanceTimeWithAudiences(ticks)
 
   distributeAudiences(audiences = audiences, registry = registry)
+
+  for (audience in audiences) {
+    for (fact in listOf(audience.fact)) {
+      if (fact.name == "character_movement_completed" || fact.name == "character_movement_interrupted" || fact.name == "activity_cancelled") {
+        val characterIdStr = fact.arguments["characterId"] as? String
+        val activityIdStr = fact.arguments["activityId"] as? String
+        if (activityIdStr != null) {
+          correlationRegistry.removeByActivityId(ActivityId(activityIdStr))
+        } else if (characterIdStr != null) {
+          // Fallback cleanup if activityId wasn't directly in facts
+          val charId = CharacterId(characterIdStr)
+          val conn = registry.findByCharacterId(charId)
+          if (conn != null && conn.sessionId != null) {
+            // cleanup correlation associated with session if needed
+          }
+        }
+      }
+    }
+  }
 
   val affectedCharacterIds = audiences.filter {
     it.fact.name == "character_movement_completed" || it.fact.name == "character_movement_interrupted"
@@ -493,7 +556,9 @@ suspend fun handleConnection(
   presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer(
     preferredShortcutsByInteractionId = DefaultPreferredInteractionShortcuts
   ),
-  pendingRegistry: SessionPendingRegistry = SessionPendingRegistry()
+  pendingRegistry: SessionPendingRegistry = SessionPendingRegistry(),
+  correlationRegistry: OperationCorrelationRegistry = OperationCorrelationRegistry(),
+  interactionOperationRegistry: SessionInteractionOperationRegistry = SessionInteractionOperationRegistry()
 ) {
   registry.register(connection)
 
@@ -594,6 +659,7 @@ suspend fun handleConnection(
                   remainingArguments = interaction.requiredArgumentNames.toMutableList()
                 )
                 pendingRegistry.set(currentSessionId, pending)
+                interactionOperationRegistry.set(currentSessionId, message.metadata.messageId)
 
                 val firstArg = pending.remainingArguments.first()
                 val promptDoc =
@@ -692,6 +758,18 @@ suspend fun handleConnection(
                     }
                   }
 
+                  is GameActionResult.ActivityStarted -> {
+                    correlationRegistry.register(message.metadata.messageId, result.activityId, currentSessionId)
+                    ServerAccepted(
+                      metadata = MessageMetadata(
+                        messageId = MessageId(UUID.randomUUID().toString()),
+                        sessionId = currentSessionId,
+                        sequence = Sequence.ZERO,
+                        correlationId = correlationId
+                      ), detail = "Activity started successfully."
+                    )
+                  }
+
                   is GameActionResult.Rejected -> {
                     ServerRejected(
                       metadata = MessageMetadata(
@@ -729,6 +807,7 @@ suspend fun handleConnection(
               val currentArgName = pending.remainingArguments.firstOrNull()
               if (currentArgName == null) {
                 pendingRegistry.remove(currentSessionId)
+                interactionOperationRegistry.remove(currentSessionId)
                 ServerRejected(
                   metadata = MessageMetadata(
                     messageId = MessageId(UUID.randomUUID().toString()),
@@ -779,6 +858,7 @@ suspend fun handleConnection(
                     )
                   } else {
                     pendingRegistry.remove(currentSessionId)
+                    interactionOperationRegistry.remove(currentSessionId)
                     val finalArgs = pending.interaction.fixedArguments + pending.collectedArguments
                     val gameAction = GameAction(
                       name = pending.interaction.actionName!!, actorId = characterId, arguments = finalArgs
@@ -814,6 +894,18 @@ suspend fun handleConnection(
                         }
                       }
 
+                      is GameActionResult.ActivityStarted -> {
+                        correlationRegistry.register(message.metadata.messageId, result.activityId, currentSessionId)
+                        ServerAccepted(
+                          metadata = MessageMetadata(
+                            messageId = MessageId(UUID.randomUUID().toString()),
+                            sessionId = currentSessionId,
+                            sequence = Sequence.ZERO,
+                            correlationId = correlationId
+                          ), detail = "Activity started successfully."
+                        )
+                      }
+
                       is GameActionResult.Rejected -> {
                         ServerRejected(
                           metadata = MessageMetadata(
@@ -841,27 +933,108 @@ suspend fun handleConnection(
         }
 
         if (message is ClientCancel && actionProcessor != null) {
-          pendingRegistry.remove(currentSessionId)
           val correlationId = CorrelationId(message.metadata.messageId)
-          val response = ServerAccepted(
-            metadata = MessageMetadata(
-              messageId = MessageId(UUID.randomUUID().toString()),
-              sessionId = currentSessionId,
-              sequence = Sequence.ZERO,
-              correlationId = correlationId
-            ), detail = "Cancelled pending interaction"
-          )
-          connection.send(response)
-          presentAvailableInteractions(
-            connection = connection,
-            actionProcessor = actionProcessor,
-            offerRegistry = offerRegistry,
-            preparer = presentationPreparer
-          )
-        }
+          val targetMsgId = message.targetMessageId
 
-        if (message is ClientAction && actionProcessor != null) {
-          // pass
+          val responseMessage = run {
+            val pendingMsgId = interactionOperationRegistry.find(currentSessionId)
+            if (pendingMsgId != null && pendingMsgId == targetMsgId) {
+              pendingRegistry.remove(currentSessionId)
+              interactionOperationRegistry.remove(currentSessionId)
+              ServerAccepted(
+                metadata = MessageMetadata(
+                  messageId = MessageId(UUID.randomUUID().toString()),
+                  sessionId = currentSessionId,
+                  sequence = Sequence.ZERO,
+                  correlationId = correlationId
+                ), detail = "Cancelled pending interaction successfully"
+              )
+            } else {
+              val targetActivityId = correlationRegistry.findActivityId(targetMsgId)
+              if (targetActivityId != null) {
+                val characterId = registry.findCharacterIdBySessionId(currentSessionId)
+                if (characterId != null) {
+                  when (val cancelResult = actionProcessor.nucleus.cancelActivity(characterId, targetActivityId)) {
+                    is GameActionResult.Success -> {
+                      correlationRegistry.removeByActivityId(targetActivityId)
+                      val protocolFacts = cancelResult.facts.map { fact ->
+                        ProtocolFact(
+                          name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
+                            value?.toString() ?: ""
+                          })
+                      }
+                      ServerCompleted(
+                        metadata = MessageMetadata(
+                          messageId = MessageId(UUID.randomUUID().toString()),
+                          sessionId = currentSessionId,
+                          sequence = Sequence.ZERO,
+                          correlationId = correlationId
+                        ), facts = protocolFacts
+                      ).also {
+                        distributeFacts(cancelResult.facts, registry, actionProcessor, excludeCharacterId = characterId)
+                        presentAvailableInteractions(
+                          connection = connection,
+                          actionProcessor = actionProcessor,
+                          offerRegistry = offerRegistry,
+                          preparer = presentationPreparer
+                        )
+                      }
+                    }
+
+                    is GameActionResult.Rejected -> {
+                      ServerRejected(
+                        metadata = MessageMetadata(
+                          messageId = MessageId(UUID.randomUUID().toString()),
+                          sessionId = currentSessionId,
+                          sequence = Sequence.ZERO,
+                          correlationId = correlationId
+                        ), reason = cancelResult.reason
+                      )
+                    }
+
+                    else -> {
+                      ServerRejected(
+                        metadata = MessageMetadata(
+                          messageId = MessageId(UUID.randomUUID().toString()),
+                          sessionId = currentSessionId,
+                          sequence = Sequence.ZERO,
+                          correlationId = correlationId
+                        ), reason = "Could not cancel activity."
+                      )
+                    }
+                  }
+                } else {
+                  ServerRejected(
+                    metadata = MessageMetadata(
+                      messageId = MessageId(UUID.randomUUID().toString()),
+                      sessionId = currentSessionId,
+                      sequence = Sequence.ZERO,
+                      correlationId = correlationId
+                    ), reason = "Character not bound to session."
+                  )
+                }
+              } else {
+                ServerRejected(
+                  metadata = MessageMetadata(
+                    messageId = MessageId(UUID.randomUUID().toString()),
+                    sessionId = currentSessionId,
+                    sequence = Sequence.ZERO,
+                    correlationId = correlationId
+                  ), reason = "Unknown or foreign targetMessageId for cancellation."
+                )
+              }
+            }
+          }
+
+          connection.send(responseMessage)
+          if (responseMessage is ServerCompleted) {
+            presentAvailableInteractions(
+              connection = connection,
+              actionProcessor = actionProcessor,
+              offerRegistry = offerRegistry,
+              preparer = presentationPreparer
+            )
+          }
         }
       }
     }
@@ -878,6 +1051,22 @@ suspend fun handleConnection(
     sessionId?.let {
       offerRegistry.remove(it)
       pendingRegistry.remove(it)
+      interactionOperationRegistry.remove(it)
+
+      // Handle session-dependent activities cancellation upon disconnection
+      if (characterId != null && actionProcessor != null) {
+        val activeActivity = actionProcessor.nucleus.getActiveActivityForCharacter(characterId)
+        if (activeActivity != null && !activeActivity.isTerminal) {
+          val cancelResult = actionProcessor.nucleus.cancelActivity(characterId, activeActivity.id)
+          if (cancelResult is GameActionResult.Success) {
+            runCatching {
+              distributeFacts(cancelResult.facts, registry, actionProcessor, excludeCharacterId = characterId)
+            }
+          }
+        }
+      }
+
+      correlationRegistry.removeBySessionId(it)
     }
 
     registry.unregister(connection.id)
@@ -950,7 +1139,9 @@ fun Application.module(
   presentationPreparer: InteractionPresentationPreparer = InteractionPresentationPreparer(
     preferredShortcutsByInteractionId = DefaultPreferredInteractionShortcuts
   ),
-  pendingRegistry: SessionPendingRegistry = SessionPendingRegistry()
+  pendingRegistry: SessionPendingRegistry = SessionPendingRegistry(),
+  correlationRegistry: OperationCorrelationRegistry = OperationCorrelationRegistry(),
+  interactionOperationRegistry: SessionInteractionOperationRegistry = SessionInteractionOperationRegistry()
 ) {
   val activeActionProcessor = actionProcessor ?: GameActionProcessor(
     buildDevelopmentNucleus(NucleusId("main_nucleus"))
@@ -966,7 +1157,8 @@ fun Application.module(
         registry = connectionRegistry,
         actionProcessor = activeActionProcessor,
         offerRegistry = offerRegistry,
-        presentationPreparer = presentationPreparer
+        presentationPreparer = presentationPreparer,
+        correlationRegistry = correlationRegistry
       )
     }
   }
@@ -986,7 +1178,9 @@ fun Application.module(
         actionProcessor = activeActionProcessor,
         offerRegistry = offerRegistry,
         presentationPreparer = presentationPreparer,
-        pendingRegistry = pendingRegistry
+        pendingRegistry = pendingRegistry,
+        correlationRegistry = correlationRegistry,
+        interactionOperationRegistry = interactionOperationRegistry
       )
     }
   }
