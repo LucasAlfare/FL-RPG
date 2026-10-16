@@ -178,8 +178,25 @@ private val lightTheme = TerminalTheme(
 private enum class ClientScreen { PRESENTATION, MENU }
 
 class ClientPresentationState {
-  var document by mutableStateOf(PresentationDocument())
-    private set
+
+  private var serverDocument by mutableStateOf(PresentationDocument())
+
+  private val recentHistory = mutableStateListOf<FeedItem>()
+
+  private val clientHistoryBlockId: BlockId = BlockId("client_recent_history")
+
+  val document: PresentationDocument
+    get() {
+      val base = serverDocument
+      val otherBlocks = base.blocks.filter { it.region != PresentationRegion.HISTORY }
+      val historyBlock = PresentationBlock(
+        id = clientHistoryBlockId, content = BlockContent.Feed(
+          feedId = "client_recent_events", items = recentHistory.toList(), ordering = FeedOrdering.CHRONOLOGICAL
+        ), title = null, region = PresentationRegion.HISTORY
+      )
+      return base.copy(blocks = otherBlocks + historyBlock)
+    }
+
   var darkThemeEnabled by mutableStateOf(true)
     private set
   private var screen by mutableStateOf(ClientScreen.PRESENTATION)
@@ -213,18 +230,26 @@ class ClientPresentationState {
       is ServerCompleted -> {
         val factsSummary = message.facts.joinToString { it.name }
         connectionMessage = "CONCLUÍDO · factos: $factsSummary"
+        message.facts.forEach { fact ->
+          appendHistory(fact.name, fact.arguments)
+        }
+      }
+
+      is ServerEvent -> {
+        connectionMessage = "EVENTO · ${message.type}"
+        appendHistory(message.type, message.payload)
       }
 
       is PresentationSnapshot -> {
-        document = message.document
-        connectionMessage = "CONECTADO · revisão de apresentação ${document.revision.value}"
+        serverDocument = message.document
+        connectionMessage = "CONECTADO · revisão de apresentação ${serverDocument.revision.value}"
       }
 
       is PresentationPatch -> {
-        val updatedDocument = runCatching { document.applyPatch(message) }
+        val updatedDocument = runCatching { serverDocument.applyPatch(message) }
         updatedDocument.onSuccess {
-          document = it
-          connectionMessage = "CONECTADO · revisão de apresentação ${document.revision.value}"
+          serverDocument = it
+          connectionMessage = "CONECTADO · revisão de apresentação ${serverDocument.revision.value}"
         }.onFailure {
           connectionMessage = "APRESENTAÇÃO DESACTUALIZADA · snapshot necessário"
         }
@@ -234,6 +259,35 @@ class ClientPresentationState {
       is ServerFailed -> connectionMessage = "FALHA NO SERVIDOR · ${message.error}"
       is ServerProtocolError -> connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
       else -> Unit
+    }
+  }
+
+  private fun appendHistory(factName: String, args: Map<String, String>) {
+    val text = describeFact(factName, args)
+    if (text.isBlank()) return
+
+    val entryId = "hist_${factName}_${recentHistory.size}_${System.nanoTime()}"
+
+    if (recentHistory.size >= 20) recentHistory.removeAt(0)
+    recentHistory.add(
+      FeedItem(
+        id = entryId, text = text, style = ProtocolTextStyle.MUTED
+      )
+    )
+  }
+
+  private fun describeFact(name: String, args: Map<String, String>): String {
+    val location = args["locationName"] ?: args["locationId"] ?: "an unknown location"
+    val origin = args["originLocationName"] ?: args["originLocationId"] ?: "an unknown origin"
+    val from = args["fromLocationName"] ?: args["fromLocationId"] ?: "an unknown origin"
+    val to = args["toLocationName"] ?: args["toLocationId"] ?: "an unknown destination"
+
+    return when (name) {
+      "character_entered" -> "You entered the world at $location."
+      "character_moved" -> "You began travelling from $from to $to."
+      "character_movement_completed" -> "You arrived at $location (from $origin)."
+      "character_movement_interrupted" -> "Your movement was interrupted; you are at $location."
+      else -> name
     }
   }
 

@@ -283,6 +283,70 @@ class InteractionPresentationPreparer(
     )
   }
 
+  fun prepareWithLocation(
+    interactions: List<Interaction>,
+    locationName: String?,
+    movementDestinationName: String?,
+    baseRevision: Revision = Revision.ZERO
+  ): PreparedPresentation {
+    val offered = interactions.map { interaction ->
+      OfferedOption(
+        choiceId = selectionIdFor(interaction), interaction = interaction
+      )
+    }
+
+    val rawChoices = offered.map { option ->
+      Choice(
+        id = option.choiceId,
+        text = option.interaction.label,
+        shortcut = preferredShortcutsByInteractionId[option.interaction.id.value],
+        enabled = true
+      )
+    }
+
+    val choices = shortcutAssigner.assign(rawChoices)
+    val newRevision = baseRevision.next()
+
+    val contextBlocks = mutableListOf<PresentationBlock>()
+    val contextText = when {
+      movementDestinationName != null && locationName != null -> "Travelling from $locationName to $movementDestinationName."
+
+      movementDestinationName != null -> "Travelling to $movementDestinationName."
+
+      locationName != null -> "You are at $locationName."
+
+      else -> null
+    }
+
+    if (contextText != null) {
+      contextBlocks.add(
+        PresentationBlock(
+          id = BlockId("current_location"),
+          content = BlockContent.Text(text = contextText, style = TextStyle.NORMAL),
+          title = "Current location",
+          region = PresentationRegion.MAIN
+        )
+      )
+    }
+
+    contextBlocks.add(
+      PresentationBlock(
+        id = choicesBlockId,
+        content = BlockContent.Choices(choices = choices),
+        title = "Available actions",
+        region = PresentationRegion.MAIN
+      )
+    )
+
+    val document = PresentationDocument(
+      revision = newRevision, blocks = contextBlocks
+    )
+
+    return PreparedPresentation(
+      choices = choices, offered = offered, document = document
+    )
+  }
+
   fun preparePrompt(promptText: String, baseRevision: Revision): PresentationDocument {
     val newRevision = baseRevision.next()
     return PresentationDocument(
@@ -363,6 +427,34 @@ suspend fun advanceTimeAndDistribute(
   return audiences.map { it.fact }
 }
 
+suspend fun advanceTimeAndDistributeAndRefreshContext(
+  ticks: Long,
+  registry: ConnectionRegistry,
+  actionProcessor: GameActionProcessor,
+  offerRegistry: SessionOfferRegistry,
+  presentationPreparer: InteractionPresentationPreparer
+): List<GameFact> {
+  val audiences = actionProcessor.advanceTimeWithAudiences(ticks)
+
+  distributeAudiences(audiences = audiences, registry = registry)
+
+  val affectedCharacterIds = audiences.filter {
+    it.fact.name == "character_movement_completed" || it.fact.name == "character_movement_interrupted"
+  }.flatMap { it.characterIds }.toSet()
+
+  for (characterId in affectedCharacterIds) {
+    val connection = registry.findByCharacterId(characterId) ?: continue
+    presentAvailableInteractions(
+      connection = connection,
+      actionProcessor = actionProcessor,
+      offerRegistry = offerRegistry,
+      preparer = presentationPreparer
+    )
+  }
+
+  return audiences.map { it.fact }
+}
+
 suspend fun presentAvailableInteractions(
   connection: Connection,
   actionProcessor: GameActionProcessor,
@@ -373,8 +465,16 @@ suspend fun presentAvailableInteractions(
   val characterId = connection.characterId ?: return
 
   val interactions = actionProcessor.availableInteractions(characterId)
+  val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
+  val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+
   val offerState = offerRegistry.getOrCreate(sessionId)
-  val prepared = preparer.prepare(interactions, baseRevision = offerState.revision)
+  val prepared = preparer.prepareWithLocation(
+    interactions = interactions,
+    locationName = locationName,
+    movementDestinationName = movementDestinationName,
+    baseRevision = offerState.revision
+  )
 
   offerState.replaceOffers(prepared.offered, prepared.document.revision)
 
@@ -520,8 +620,14 @@ suspend fun handleConnection(
               }
 
               interaction.isMenu -> {
-                val preparedMenu = presentationPreparer.prepare(
-                  interactions = interaction.children, baseRevision = offerState.revision
+                val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
+                val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+
+                val preparedMenu = presentationPreparer.prepareWithLocation(
+                  interactions = interaction.children,
+                  locationName = locationName,
+                  movementDestinationName = movementDestinationName,
+                  baseRevision = offerState.revision
                 )
                 offerState.replaceOffers(preparedMenu.offered, preparedMenu.document.revision)
 
@@ -855,8 +961,12 @@ fun Application.module(
   launch {
     while (isActive) {
       delay(SIMULATION_TICK_INTERVAL_MS)
-      advanceTimeAndDistribute(
-        ticks = SIMULATION_TICKS_PER_INTERVAL, registry = connectionRegistry, actionProcessor = activeActionProcessor
+      advanceTimeAndDistributeAndRefreshContext(
+        ticks = SIMULATION_TICKS_PER_INTERVAL,
+        registry = connectionRegistry,
+        actionProcessor = activeActionProcessor,
+        offerRegistry = offerRegistry,
+        presentationPreparer = presentationPreparer
       )
     }
   }

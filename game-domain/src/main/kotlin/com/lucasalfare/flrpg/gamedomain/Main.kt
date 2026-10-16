@@ -181,15 +181,15 @@ class DefaultInteractionProvider : InteractionProvider {
 
     val destinationInteractions =
       nucleus.world.graph.getOutgoingConnections(currentLocationId).distinctBy { it.to }.map { connection ->
-          val destinationId = connection.to
-          val displayName = nucleus.getLocationDisplayName(destinationId) ?: destinationId.value
-          Interaction(
-            id = InteractionId("move_to_${destinationId.value}"),
-            label = displayName,
-            actionName = "move",
-            fixedArguments = mapOf("targetLocationId" to destinationId.value)
-          )
-        }
+        val destinationId = connection.to
+        val displayName = nucleus.getLocationDisplayName(destinationId) ?: destinationId.value
+        Interaction(
+          id = InteractionId("move_to_${destinationId.value}"),
+          label = displayName,
+          actionName = "move",
+          fixedArguments = mapOf("targetLocationId" to destinationId.value)
+        )
+      }
 
     if (destinationInteractions.isEmpty()) {
       return emptyList()
@@ -255,9 +255,11 @@ class EnterWorldHandler : GameActionHandler {
 
     nucleus.registerCharacter(action.actorId)
 
+    val locationDisplayName = nucleus.getLocationDisplayName(locationId) ?: locationId.value
+
     val fact = GameFact(
       name = "character_entered", arguments = mapOf(
-        "characterId" to action.actorId.value, "locationId" to locationId.value
+        "characterId" to action.actorId.value, "locationId" to locationId.value, "locationName" to locationDisplayName
       )
     )
 
@@ -326,12 +328,17 @@ class MoveHandler : GameActionHandler {
     return try {
       nucleus.world.startMovement(movement)
 
+      val originDisplayName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
+      val destinationDisplayName = nucleus.getLocationDisplayName(destinationId) ?: destinationId.value
+
       val fact = GameFact(
         name = "character_moved", arguments = mapOf(
           "characterId" to action.actorId.value,
           "fromLocationId" to currentLocationId.value,
           "toLocationId" to destinationId.value,
-          "locationId" to currentLocationId.value
+          "locationId" to currentLocationId.value,
+          "fromLocationName" to originDisplayName,
+          "toLocationName" to destinationDisplayName
         )
       )
 
@@ -364,6 +371,19 @@ class GameActionProcessor(
     fun defaultHandlers(): List<GameActionHandler> = listOf(
       EnterWorldHandler(), MoveHandler()
     )
+  }
+
+  fun getCharacterLocationDisplayName(characterId: CharacterId): String? = synchronized(nucleus.stateLock) {
+    val entityId = WorldEntityId(characterId.value)
+    val locationId = nucleus.world.state.getLocation(entityId) ?: return@synchronized null
+    nucleus.getLocationDisplayName(locationId) ?: locationId.value
+  }
+
+  fun getCharacterMovementDestinationDisplayName(characterId: CharacterId): String? = synchronized(nucleus.stateLock) {
+    val entityId = WorldEntityId(characterId.value)
+    val movement = nucleus.world.getMovement(entityId) ?: return@synchronized null
+    if (!movement.isInProgress) return@synchronized null
+    nucleus.getLocationDisplayName(movement.destination) ?: movement.destination.value
   }
 
   fun availableInteractions(characterId: CharacterId): List<Interaction> = synchronized(nucleus.stateLock) {
@@ -435,22 +455,33 @@ class GameActionProcessor(
         val currentLocation = nucleus.world.state.getLocation(movement.entityId)
 
         if (currentLocation == movement.destination) {
+          val originName = nucleus.getLocationDisplayName(movement.origin) ?: movement.origin.value
+          val destinationName = nucleus.getLocationDisplayName(movement.destination) ?: movement.destination.value
+
           facts.add(
             GameFact(
               name = "character_movement_completed", arguments = mapOf(
                 "characterId" to movement.entityId.value,
                 "originLocationId" to movement.origin.value,
-                "locationId" to movement.destination.value
+                "locationId" to movement.destination.value,
+                "originLocationName" to originName,
+                "locationName" to destinationName
               )
             )
           )
         } else {
+          val currentLocationId = currentLocation ?: movement.origin
+          val originName = nucleus.getLocationDisplayName(movement.origin) ?: movement.origin.value
+          val currentName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
+
           facts.add(
             GameFact(
               name = "character_movement_interrupted", arguments = mapOf(
                 "characterId" to movement.entityId.value,
                 "originLocationId" to movement.origin.value,
-                "locationId" to (currentLocation?.value ?: movement.origin.value)
+                "locationId" to currentLocationId.value,
+                "originLocationName" to originName,
+                "locationName" to currentName
               )
             )
           )
