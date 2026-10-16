@@ -1,38 +1,19 @@
 plugins {
-  kotlin("jvm") version "2.3.0"
+  alias(libs.plugins.kotlin.jvm)
   application
 }
-
-group = "com.lucasalfare"
-version = "1.0-SNAPSHOT"
-
-repositories {
-  mavenCentral()
-  maven { url = uri("https://jitpack.io") }
-}
-
-val ktorVersion = "3.6.0"
 
 dependencies {
   implementation(project(":communication-protocol"))
   implementation(project(":game-domain"))
 
-  implementation("io.ktor:ktor-server-netty:$ktorVersion")
-  implementation("io.ktor:ktor-server-websockets:$ktorVersion")
+  implementation(libs.ktor.server.netty)
+  implementation(libs.ktor.server.websockets)
 
-  testImplementation("io.ktor:ktor-client-websockets:$ktorVersion")
-  testImplementation("io.ktor:ktor-server-test-host:$ktorVersion")
-  testImplementation(kotlin("test"))
-}
-
-kotlin {
-  jvmToolchain(25)
+  testImplementation(libs.ktor.client.websockets)
+  testImplementation(libs.ktor.server.test.host)
 }
 
 application {
-  mainClass.set("com.lucasalfare.flrpg.server.MainKt")   // ajuste se o nome for diferente
-}
-
-tasks.test {
-  useJUnitPlatform()
+  mainClass.set("com.lucasalfare.flrpg.server.MainKt")
 }

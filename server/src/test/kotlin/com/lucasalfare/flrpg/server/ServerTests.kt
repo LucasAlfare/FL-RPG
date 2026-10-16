@@ -316,7 +316,7 @@ class ServerTests {
     val welcome = connection.sentMessages.single()
     assertTrue(welcome is ServerWelcome)
     assertEquals(sessionId, welcome.metadata.sessionId)
-    assertFalse((welcome as ServerWelcome).isResumed)
+    assertFalse(welcome.isResumed)
     assertTrue(connection.closed)
   }
 

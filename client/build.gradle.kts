@@ -1,37 +1,17 @@
 plugins {
-  kotlin("jvm") version "2.3.0"
-  id("org.jetbrains.compose") version "1.10.3"
-  id("org.jetbrains.kotlin.plugin.compose") version "2.3.0"
+  alias(libs.plugins.kotlin.jvm)
+  alias(libs.plugins.jetbrains.compose)
+  alias(libs.plugins.kotlin.compose)
 }
-
-group = "com.lucasalfare"
-version = "1.0-SNAPSHOT"
-
-repositories {
-  google()
-  mavenCentral()
-}
-
-val ktorVersion = "3.6.0"
 
 dependencies {
   implementation(project(":communication-protocol"))
   implementation(compose.desktop.currentOs)
   implementation("org.jetbrains.compose.material3:material3:1.10.0-alpha05")
 
-  implementation("io.ktor:ktor-client-core:${ktorVersion}")
-  implementation("io.ktor:ktor-client-cio:${ktorVersion}")
-  implementation("io.ktor:ktor-client-websockets:${ktorVersion}")
-
-  testImplementation(kotlin("test"))
-}
-
-kotlin {
-  jvmToolchain(25)
-}
-
-tasks.test {
-  useJUnitPlatform()
+  implementation(libs.ktor.client.core)
+  implementation(libs.ktor.client.cio)
+  implementation(libs.ktor.client.websockets)
 }
 
 compose.desktop {

@@ -1,28 +1,13 @@
 plugins {
-  kotlin("jvm") version "2.3.0"
-}
-
-group = "com.lucasalfare"
-version = "1.0-SNAPSHOT"
-
-repositories {
-  mavenCentral()
-  maven { url = uri("https://jitpack.io") }
+  alias(libs.plugins.kotlin.jvm)
 }
 
 dependencies {
-  api("com.github.LucasAlfare:FL-Turns:1.0.0")
-  api("com.github.LucasAlfare:FL-Combat:1.0.0")
-  api("com.github.LucasAlfare:FL-World:1.0.0")
-  api("com.github.LucasAlfare:FL-Economy:1.2.0")
+  api(libs.fl.turns)
+  api(libs.fl.combat)
+  api(libs.fl.world)
+  api(libs.fl.economy)
 
-  testImplementation(kotlin("test"))
-}
-
-kotlin {
-  jvmToolchain(25)
-}
-
-tasks.test {
-  useJUnitPlatform()
+  // Agora você tem Coroutines nativo no domain sem gambiarra
+  implementation(libs.kotlinx.coroutines.core)
 }

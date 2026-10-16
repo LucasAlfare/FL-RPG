@@ -1,5 +1,6 @@
 package com.lucasalfare.flrpg.communicationprotocol
 
+import kotlinx.coroutines.*
 import kotlin.test.*
 
 class CommunicationProtocolTests {
@@ -968,5 +969,55 @@ class CommunicationProtocolTests {
 
     assertEquals(Sequence(21), tracker.expectedSequence)
     assertFalse(tracker.isProcessed(processedId))
+  }
+
+  @Test
+  fun sequenceTracker_concurrentSameSequenceAcceptsOnlyOne() = runBlocking {
+    val tracker = SequenceTracker(Sequence.ZERO)
+    val gate = CompletableDeferred<Unit>()
+    val contenders = 64
+
+    val jobs = (1..contenders).map { index ->
+      async(Dispatchers.Default) {
+        gate.await()
+        tracker.process(MessageId("concurrent-$index"), Sequence.ZERO)
+      }
+    }
+
+    gate.complete(Unit)
+    val statuses = jobs.awaitAll()
+
+    assertEquals(1, statuses.count { it == SequenceStatus.EXPECTED })
+    assertEquals(contenders - 1, statuses.count { it == SequenceStatus.STALE })
+    assertEquals(Sequence(1), tracker.expectedSequence)
+    assertEquals(1, (1..contenders).count { tracker.isProcessed(MessageId("concurrent-$it")) })
+  }
+
+  @Test
+  fun sequenceTracker_concurrentMessagesPreserveSequenceState() = runBlocking {
+    val tracker = SequenceTracker(Sequence.ZERO)
+    val gate = CompletableDeferred<Unit>()
+    val messageCount = 64
+
+    val jobs = (0 until messageCount).map { index ->
+      async(Dispatchers.Default) {
+        gate.await()
+        val messageId = MessageId("message-$index")
+        val status = tracker.process(messageId, Sequence(index.toLong()))
+        index to status
+      }
+    }
+
+    gate.complete(Unit)
+    val outcomes = jobs.awaitAll()
+
+    val acceptedIndices = outcomes.filter { it.second == SequenceStatus.EXPECTED }.map { it.first }.toSet()
+    val processedIndices = (0 until messageCount).filter { tracker.isProcessed(MessageId("message-$it")) }.toSet()
+
+    assertTrue(acceptedIndices.isNotEmpty())
+    assertEquals(acceptedIndices, processedIndices)
+    assertEquals(acceptedIndices.size.toLong(), tracker.expectedSequence.value)
+    assertTrue(outcomes.filter { it.second != SequenceStatus.EXPECTED }
+      .all { it.second == SequenceStatus.GAP || it.second == SequenceStatus.STALE })
   }
 }

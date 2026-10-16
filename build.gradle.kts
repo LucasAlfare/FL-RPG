@@ -1,22 +1,31 @@
 plugins {
-  kotlin("jvm") version "2.3.0"
+  alias(libs.plugins.kotlin.jvm) apply false
+  alias(libs.plugins.kotlin.serialization) apply false
+  alias(libs.plugins.kotlin.compose) apply false
+  alias(libs.plugins.jetbrains.compose) apply false
 }
 
-group = "com.lucasalfare"
-version = "1.0-SNAPSHOT"
+subprojects {
+  group = "com.lucasalfare"
+  version = "1.0-SNAPSHOT"
 
-repositories {
-  mavenCentral()
-}
+  repositories {
+    google()
+    mavenCentral()
+    maven { url = uri("https://jitpack.io") }
+  }
 
-dependencies {
-  testImplementation(kotlin("test"))
-}
+  plugins.withId("org.jetbrains.kotlin.jvm") {
+    configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
+      jvmToolchain(25)
+    }
 
-kotlin {
-  jvmToolchain(25)
-}
+    tasks.withType<Test> {
+      useJUnitPlatform()
+    }
 
-tasks.test {
-  useJUnitPlatform()
+    dependencies {
+      "testImplementation"(kotlin("test"))
+    }
+  }
 }

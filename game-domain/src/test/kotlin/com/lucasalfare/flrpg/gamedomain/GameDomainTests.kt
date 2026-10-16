@@ -2,6 +2,7 @@ package com.lucasalfare.flrpg.gamedomain
 
 import com.lucasalfare.flworld.WorldEntityId
 import com.lucasalfare.flworld.WorldLocationId
+import kotlinx.coroutines.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -364,5 +365,65 @@ class GameDomainTests {
 
     assertEquals(1, firstFacts.count { it.name == "character_movement_completed" })
     assertEquals(0, secondFacts.count { it.name == "character_movement_completed" })
+  }
+
+  @Test
+  fun gameActionProcessor_concurrentEntryOfSameCharacterSucceedsOnlyOnce() = runBlocking {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val actorId = CharacterId("hero")
+    val gate = CompletableDeferred<Unit>()
+    val contenders = 32
+
+    val jobs = (1..contenders).map {
+      async(Dispatchers.Default) {
+        gate.await()
+        processor.process(
+          GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
+        )
+      }
+    }
+
+    gate.complete(Unit)
+    val outcomes = jobs.awaitAll()
+
+    assertEquals(1, outcomes.count { it is GameActionResult.Success })
+    assertEquals(contenders - 1, outcomes.count { it is GameActionResult.Rejected })
+    assertTrue(nucleus.containsCharacter(actorId))
+    assertEquals(WorldLocationId("spawn"), nucleus.world.state.getLocation(WorldEntityId(actorId.value)))
+    assertEquals(listOf(actorId), nucleus.getCharactersAtLocation(WorldLocationId("spawn")))
+  }
+
+  @Test
+  fun gameActionProcessor_concurrentEntriesAndTimeAdvancementPreserveState() = runBlocking {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+    val processor = GameActionProcessor(nucleus)
+    val gate = CompletableDeferred<Unit>()
+    val entrants = 24
+
+    val entries = (1..entrants).map { index ->
+      async(Dispatchers.Default) {
+        gate.await()
+        processor.process(
+          GameAction("enter_world", CharacterId("character-$index"), mapOf("locationId" to "spawn"))
+        )
+      }
+    }
+
+    val advances = (1..8).map {
+      async(Dispatchers.Default) {
+        gate.await()
+        processor.advanceTime(1L)
+      }
+    }
+
+    gate.complete(Unit)
+    val entryResults = entries.awaitAll()
+    advances.awaitAll()
+
+    assertEquals(entrants, entryResults.count { it is GameActionResult.Success })
+    assertEquals(entrants, nucleus.characters.size)
+    assertEquals(entrants, nucleus.getCharactersAtLocation(WorldLocationId("spawn")).size)
+    assertTrue(nucleus.world.getActiveMovements().isEmpty())
   }
 }
