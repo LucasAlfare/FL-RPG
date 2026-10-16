@@ -11,10 +11,10 @@ repositories {
 }
 
 dependencies {
-  implementation("com.github.LucasAlfare:FL-Turns:1.0.0")
-  implementation("com.github.LucasAlfare:FL-Combat:1.0.0")
-  implementation("com.github.LucasAlfare:FL-World:1.0.0")
-  implementation("com.github.LucasAlfare:FL-Economy:1.2.0")
+  api("com.github.LucasAlfare:FL-Turns:1.0.0")
+  api("com.github.LucasAlfare:FL-Combat:1.0.0")
+  api("com.github.LucasAlfare:FL-World:1.0.0")
+  api("com.github.LucasAlfare:FL-Economy:1.2.0")
 
   testImplementation(kotlin("test"))
 }

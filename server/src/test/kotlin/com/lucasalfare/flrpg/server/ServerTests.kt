@@ -2,6 +2,7 @@ package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
 import com.lucasalfare.flrpg.gamedomain.*
+import com.lucasalfare.flworld.WorldLocationId
 import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -89,6 +90,18 @@ private fun buildProcessor(): GameActionProcessor {
   nucleus.registerLocation("forest")
   nucleus.connectLocations("spawn", "forest")
   return GameActionProcessor(nucleus)
+}
+
+private fun buildE2ENucleus(): Nucleus {
+  val nucleus = Nucleus(NucleusId("e2e_nucleus"))
+  nucleus.registerLocation("spawn")
+  nucleus.registerLocation("forest")
+  nucleus.connectLocations("spawn", "forest")
+  return nucleus
+}
+
+private fun PresentationSnapshot.hasChoice(choiceId: String): Boolean = document.blocks.any { block ->
+  (block.content as? BlockContent.Choices)?.choices?.any { it.id == choiceId } == true
 }
 
 private suspend fun DefaultClientWebSocketSession.receiveServerMessage(): ServerMessage {
@@ -828,89 +841,299 @@ class ServerNetworkTests {
       assertEquals(RejectionReason.INCOMPATIBLE_VERSION, response.reason)
     }
   }
+}
+
+class ServerEndToEndTests {
 
   @Test
-  fun webSocket_processesValidGameMessage() = testApplication {
+  fun e2e_playerEntersWorldSuccessfully() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
     val registry = ConnectionRegistry()
-    val offerRegistry = SessionOfferRegistry()
+
     application {
       module(
-        connectionRegistry = registry, actionProcessor = buildProcessor(), offerRegistry = offerRegistry
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
       )
     }
 
     val wsClient = createClient { install(WebSockets) }
-    val sessionId = SessionId("session-1")
+    val sessionId = SessionId("e2e-enter-session")
 
     wsClient.webSocket("/game") {
-      send(Frame.Text(clientHello("hello-1", sessionId, Sequence.ZERO).toJson()))
+      send(Frame.Text(clientHello("hello-enter", sessionId, Sequence.ZERO).toJson()))
       assertIs<ServerWelcome>(receiveServerMessage())
       assertIs<PresentationSnapshot>(receiveServerMessage())
 
-      send(Frame.Text(clientSelection("sel-1", sessionId, Sequence.ZERO, "opt_enter_world").toJson()))
-
+      send(
+        Frame.Text(
+          clientSelection("sel-enter", sessionId, Sequence.ZERO, "opt_enter_world").toJson()
+        )
+      )
       assertIs<PresentationSnapshot>(receiveServerMessage())
       val completed = receiveServerMessage()
       assertIs<ServerCompleted>(completed)
       assertTrue(completed.facts.any { it.name == "character_entered" })
+
+      val characterId = registry.findCharacterIdBySessionId(sessionId)
+      assertNotNull(characterId)
+      assertTrue(nucleus.containsCharacter(characterId))
+      assertEquals(listOf(characterId), nucleus.getCharactersAtLocation(WorldLocationId("spawn")))
     }
   }
 
   @Test
-  fun webSocket_doesNotExecuteDuplicateAction() = testApplication {
+  fun e2e_playerReceivesAvailableInteractionsAfterEnteringWorld() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
     val registry = ConnectionRegistry()
-    val offerRegistry = SessionOfferRegistry()
+
     application {
       module(
-        connectionRegistry = registry, actionProcessor = buildProcessor(), offerRegistry = offerRegistry
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
       )
     }
 
     val wsClient = createClient { install(WebSockets) }
-    val sessionId = SessionId("session-1")
+    val sessionId = SessionId("e2e-interactions-session")
 
     wsClient.webSocket("/game") {
-      send(Frame.Text(clientHello("hello-1", sessionId, Sequence.ZERO).toJson()))
+      send(Frame.Text(clientHello("hello-interactions", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+
+      val initialSnapshot = receiveServerMessage()
+      assertIs<PresentationSnapshot>(initialSnapshot)
+      assertTrue(initialSnapshot.hasChoice("opt_enter_world"))
+      assertFalse(initialSnapshot.hasChoice("opt_move"))
+
+      send(
+        Frame.Text(
+          clientSelection("sel-enter", sessionId, Sequence.ZERO, "opt_enter_world").toJson()
+        )
+      )
+      val afterEnterSnapshot = receiveServerMessage()
+      assertIs<PresentationSnapshot>(afterEnterSnapshot)
+      assertTrue(afterEnterSnapshot.hasChoice("opt_move"))
+      assertFalse(afterEnterSnapshot.hasChoice("opt_enter_world"))
+
+      assertIs<ServerCompleted>(receiveServerMessage())
+    }
+  }
+
+  @Test
+  fun e2e_playerStartsMovementWithoutImmediateTeleport() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
+    val registry = ConnectionRegistry()
+
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("e2e-move-session")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-move", sessionId, Sequence.ZERO).toJson()))
       assertIs<ServerWelcome>(receiveServerMessage())
       assertIs<PresentationSnapshot>(receiveServerMessage())
 
-      send(Frame.Text(clientSelection("sel-dup", sessionId, Sequence.ZERO, "opt_enter_world").toJson()))
+      send(
+        Frame.Text(
+          clientSelection("sel-enter", sessionId, Sequence.ZERO, "opt_enter_world").toJson()
+        )
+      )
       assertIs<PresentationSnapshot>(receiveServerMessage())
-      val firstCompleted = receiveServerMessage()
-      assertIs<ServerCompleted>(firstCompleted)
-      assertTrue(firstCompleted.facts.any { it.name == "character_entered" })
+      assertIs<ServerCompleted>(receiveServerMessage())
 
-      send(Frame.Text(clientSelection("sel-dup", sessionId, Sequence(1), "opt_enter_world").toJson()))
-      send(Frame.Text(clientSelection("sel-follow", sessionId, Sequence(1), "opt_move").toJson()))
+      send(Frame.Text(clientSelection("sel-move", sessionId, Sequence(1), "opt_move").toJson()))
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      assertIs<ServerAccepted>(receiveServerMessage())
+
+      send(Frame.Text(clientText("txt-target", sessionId, Sequence(2), "forest").toJson()))
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      val completed = receiveServerMessage()
+      assertIs<ServerCompleted>(completed)
+      assertTrue(completed.facts.any { it.name == "character_moved" })
+
+      val characterId = registry.findCharacterIdBySessionId(sessionId)
+      assertNotNull(characterId)
+      assertEquals(listOf(characterId), nucleus.getCharactersAtLocation(WorldLocationId("spawn")))
+      assertTrue(nucleus.getCharactersAtLocation(WorldLocationId("forest")).isEmpty())
+    }
+  }
+
+  @Test
+  fun e2e_playerReceivesMovementCompletionEvent() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
+    val registry = ConnectionRegistry()
+
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("e2e-move-completion-session")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-move-completion", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+
+      send(
+        Frame.Text(
+          clientSelection("sel-enter", sessionId, Sequence.ZERO, "opt_enter_world").toJson()
+        )
+      )
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      assertIs<ServerCompleted>(receiveServerMessage())
+
+      send(Frame.Text(clientSelection("sel-move", sessionId, Sequence(1), "opt_move").toJson()))
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      assertIs<ServerAccepted>(receiveServerMessage())
+
+      send(Frame.Text(clientText("txt-target", sessionId, Sequence(2), "forest").toJson()))
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      val moveStarted = receiveServerMessage()
+      assertIs<ServerCompleted>(moveStarted)
+      assertTrue(moveStarted.facts.any { it.name == "character_moved" })
+
+      val characterId = registry.findCharacterIdBySessionId(sessionId)
+      assertNotNull(characterId)
+
+      advanceTimeAndDistribute(1L, registry, processor)
+
+      val event = receiveServerMessage()
+      assertIs<ServerEvent>(event)
+      assertEquals("character_movement_completed", event.type)
+      assertEquals(characterId.value, event.payload["characterId"])
+      assertEquals("forest", event.payload["locationId"])
+
+      assertEquals(listOf(characterId), nucleus.getCharactersAtLocation(WorldLocationId("forest")))
+    }
+  }
+
+  @Test
+  fun e2e_invalidSelectionDoesNotChangeWorld() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
+    val registry = ConnectionRegistry()
+
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("e2e-invalid-session")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-invalid", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+
+      send(
+        Frame.Text(
+          clientSelection("sel-bad", sessionId, Sequence.ZERO, "opt_does_not_exist").toJson()
+        )
+      )
+      val response = receiveServerMessage()
+      assertIs<ServerRejected>(response)
+      assertTrue(response.reason.contains("Unknown or expired choice"))
+
+      assertTrue(nucleus.characters.isEmpty())
+    }
+  }
+
+  @Test
+  fun e2e_duplicateActionDoesNotRepeatWorldMutation() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
+    val registry = ConnectionRegistry()
+
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("e2e-duplicate-session")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-duplicate", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+
+      send(
+        Frame.Text(
+          clientSelection("sel-enter", sessionId, Sequence.ZERO, "opt_enter_world").toJson()
+        )
+      )
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      val first = receiveServerMessage()
+      assertIs<ServerCompleted>(first)
+      assertEquals(1, first.facts.count { it.name == "character_entered" })
+
+      send(
+        Frame.Text(
+          clientSelection("sel-enter", sessionId, Sequence(1), "opt_enter_world").toJson()
+        )
+      )
+      send(Frame.Text(clientSelection("sel-move", sessionId, Sequence(1), "opt_move").toJson()))
 
       assertIs<PresentationSnapshot>(receiveServerMessage())
       val accepted = receiveServerMessage()
       assertIs<ServerAccepted>(accepted)
       assertTrue(accepted.detail?.contains("targetLocationId") == true)
+
+      val characterId = registry.findCharacterIdBySessionId(sessionId)
+      assertNotNull(characterId)
+      assertEquals(listOf(characterId), nucleus.getCharactersAtLocation(WorldLocationId("spawn")))
     }
   }
 
   @Test
-  fun webSocket_releasesResourcesAfterDisconnect() = testApplication {
+  fun e2e_disconnectCleansCharacterAndSessionState() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
     val registry = ConnectionRegistry()
     val offerRegistry = SessionOfferRegistry()
     val pendingRegistry = SessionPendingRegistry()
+
     application {
       module(
         connectionRegistry = registry,
-        actionProcessor = buildProcessor(),
+        actionProcessor = processor,
         offerRegistry = offerRegistry,
         pendingRegistry = pendingRegistry
       )
     }
 
     val wsClient = createClient { install(WebSockets) }
-    val sessionId = SessionId("session-disconnect")
+    val sessionId = SessionId("e2e-disconnect-session")
 
     wsClient.webSocket("/game") {
-      send(Frame.Text(clientHello("hello-1", sessionId, Sequence.ZERO).toJson()))
+      send(Frame.Text(clientHello("hello-disconnect", sessionId, Sequence.ZERO).toJson()))
       assertIs<ServerWelcome>(receiveServerMessage())
       assertIs<PresentationSnapshot>(receiveServerMessage())
+
+      send(
+        Frame.Text(
+          clientSelection("sel-enter", sessionId, Sequence.ZERO, "opt_enter_world").toJson()
+        )
+      )
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      assertIs<ServerCompleted>(receiveServerMessage())
+
+      assertTrue(nucleus.characters.isNotEmpty())
+
       close()
     }
 
@@ -923,5 +1146,6 @@ class ServerNetworkTests {
     assertNull(registry.findBySessionId(sessionId))
     assertNull(offerRegistry.find(sessionId))
     assertNull(pendingRegistry.find(sessionId))
+    assertTrue(nucleus.characters.isEmpty())
   }
 }
