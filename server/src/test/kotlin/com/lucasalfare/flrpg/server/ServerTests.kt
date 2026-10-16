@@ -9,9 +9,7 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.server.testing.*
 import io.ktor.websocket.*
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.*
 import java.util.*
 import kotlin.test.*
 
@@ -107,6 +105,18 @@ private fun PresentationSnapshot.hasChoice(choiceId: String): Boolean = document
 private suspend fun DefaultClientWebSocketSession.receiveServerMessage(): ServerMessage {
   val frame = incoming.receive() as Frame.Text
   return frame.readText().toProtocolMessage<ProtocolMessage>() as ServerMessage
+}
+
+private suspend inline fun <reified T : ServerMessage> DefaultClientWebSocketSession.receiveIgnoringWorldEvents(): T {
+  while (true) {
+    when (val message = receiveServerMessage()) {
+      is T -> return message
+      is ServerEvent -> continue
+      else -> fail(
+        "Expected ${T::class.simpleName} but received ${message::class.simpleName} " + "while waiting; only ServerEvent may be interleaved."
+      )
+    }
+  }
 }
 
 class ServerTests {
@@ -839,6 +849,204 @@ class ServerNetworkTests {
       val response = receiveServerMessage()
       assertIs<ServerReject>(response)
       assertEquals(RejectionReason.INCOMPATIBLE_VERSION, response.reason)
+    }
+  }
+
+  @Test
+  fun server_50ConcurrentWebSocketClientsCanEnterAndDisconnect() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
+    val registry = ConnectionRegistry()
+
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+
+    coroutineScope {
+      val gate = CompletableDeferred<Unit>()
+      val clients = (1..50).map { index ->
+        launch {
+          val sessionId = SessionId("bulk-session-$index")
+          gate.await()
+          wsClient.webSocket("/game") {
+            send(Frame.Text(clientHello("hello-$index", sessionId, Sequence.ZERO).toJson()))
+            assertIs<ServerWelcome>(receiveServerMessage())
+            receiveIgnoringWorldEvents<PresentationSnapshot>()
+
+            send(
+              Frame.Text(
+                clientSelection("select-$index", sessionId, Sequence.ZERO, "opt_enter_world").toJson()
+              )
+            )
+            receiveIgnoringWorldEvents<PresentationSnapshot>()
+            val completed = receiveIgnoringWorldEvents<ServerCompleted>()
+            assertTrue(completed.facts.any { it.name == "character_entered" })
+
+            close()
+          }
+        }
+      }
+      gate.complete(Unit)
+      clients.joinAll()
+    }
+
+    withTimeout(10_000) {
+      while (registry.activeConnections().isNotEmpty() || nucleus.characters.isNotEmpty()) {
+        delay(10)
+      }
+    }
+
+    assertTrue(registry.activeConnections().isEmpty())
+    assertTrue(nucleus.characters.isEmpty())
+  }
+
+  @Test
+  fun server_concurrentSessionsDoNotSharePendingInteractions() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
+    val registry = ConnectionRegistry()
+    val offerRegistry = SessionOfferRegistry()
+    val pendingRegistry = SessionPendingRegistry()
+
+    application {
+      module(
+        connectionRegistry = registry,
+        actionProcessor = processor,
+        offerRegistry = offerRegistry,
+        pendingRegistry = pendingRegistry
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionA = SessionId("concurrent-session-a")
+    val sessionB = SessionId("concurrent-session-b")
+
+    coroutineScope {
+      val gate = CompletableDeferred<Unit>()
+
+      val clientA = launch {
+        gate.await()
+        wsClient.webSocket("/game") {
+          send(Frame.Text(clientHello("hello-a", sessionA, Sequence.ZERO).toJson()))
+          assertIs<ServerWelcome>(receiveServerMessage())
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+
+          send(Frame.Text(clientSelection("select-a-enter", sessionA, Sequence.ZERO, "opt_enter_world").toJson()))
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+          receiveIgnoringWorldEvents<ServerCompleted>()
+
+          send(Frame.Text(clientSelection("select-a-move", sessionA, Sequence(1), "opt_move").toJson()))
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+          receiveIgnoringWorldEvents<ServerAccepted>()
+
+          send(Frame.Text(clientText("text-a", sessionA, Sequence(2), "forest").toJson()))
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+          val completed = receiveIgnoringWorldEvents<ServerCompleted>()
+          assertTrue(completed.facts.any { it.name == "character_moved" })
+
+          close()
+        }
+      }
+
+      val clientB = launch {
+        gate.await()
+        wsClient.webSocket("/game") {
+          send(Frame.Text(clientHello("hello-b", sessionB, Sequence.ZERO).toJson()))
+          assertIs<ServerWelcome>(receiveServerMessage())
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+
+          send(Frame.Text(clientSelection("select-b-enter", sessionB, Sequence.ZERO, "opt_enter_world").toJson()))
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+          receiveIgnoringWorldEvents<ServerCompleted>()
+
+          send(Frame.Text(clientSelection("select-b-move", sessionB, Sequence(1), "opt_move").toJson()))
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+          receiveIgnoringWorldEvents<ServerAccepted>()
+
+          send(Frame.Text(clientText("text-b", sessionB, Sequence(2), "forest").toJson()))
+          receiveIgnoringWorldEvents<PresentationSnapshot>()
+          val completed = receiveIgnoringWorldEvents<ServerCompleted>()
+          assertTrue(completed.facts.any { it.name == "character_moved" })
+
+          close()
+        }
+      }
+
+      gate.complete(Unit)
+      clientA.join()
+      clientB.join()
+    }
+
+    withTimeout(10_000) {
+      while (registry.activeConnections().isNotEmpty() || nucleus.characters.isNotEmpty()) {
+        delay(10)
+      }
+    }
+
+    assertNull(pendingRegistry.find(sessionA))
+    assertNull(pendingRegistry.find(sessionB))
+    assertTrue(nucleus.characters.isEmpty())
+  }
+
+  @Test
+  fun server_burstOfValidAndInvalidSelectionsPreservesState() = testApplication {
+    val nucleus = buildE2ENucleus()
+    val processor = GameActionProcessor(nucleus)
+    val registry = ConnectionRegistry()
+
+    application {
+      module(
+        connectionRegistry = registry, actionProcessor = processor, offerRegistry = SessionOfferRegistry()
+      )
+    }
+
+    val wsClient = createClient { install(WebSockets) }
+    val sessionId = SessionId("burst-session")
+
+    wsClient.webSocket("/game") {
+      send(Frame.Text(clientHello("hello-burst", sessionId, Sequence.ZERO).toJson()))
+      assertIs<ServerWelcome>(receiveServerMessage())
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+
+      val invalidCount = 30
+      for (index in 0 until invalidCount) {
+        send(
+          Frame.Text(
+            clientSelection(
+              "select-invalid-$index", sessionId, Sequence(index.toLong()), "opt_invalid"
+            ).toJson()
+          )
+        )
+      }
+
+      repeat(invalidCount) {
+        val response = receiveServerMessage()
+        assertIs<ServerRejected>(response)
+      }
+
+      assertTrue(nucleus.characters.isEmpty())
+
+      send(
+        Frame.Text(
+          clientSelection(
+            "select-valid-enter", sessionId, Sequence(invalidCount.toLong()), "opt_enter_world"
+          ).toJson()
+        )
+      )
+
+      assertIs<PresentationSnapshot>(receiveServerMessage())
+      val completed = receiveServerMessage()
+      assertIs<ServerCompleted>(completed)
+      assertTrue(completed.facts.any { it.name == "character_entered" })
+
+      val characterId = registry.findCharacterIdBySessionId(sessionId)
+      assertNotNull(characterId)
+      assertEquals(listOf(characterId), nucleus.getCharactersAtLocation(WorldLocationId("spawn")))
+      assertTrue(nucleus.world.getActiveMovements().isEmpty())
     }
   }
 }
