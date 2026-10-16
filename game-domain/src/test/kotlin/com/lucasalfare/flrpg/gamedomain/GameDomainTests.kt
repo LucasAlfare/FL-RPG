@@ -97,8 +97,12 @@ class GameDomainTests {
   }
 
   @Test
-  fun defaultInteractionProvider_offersMovementForRegisteredCharacter() {
+  fun defaultInteractionProvider_offersMoveMenuWhenCurrentLocationHasOutgoingConnections() {
     val nucleus = Nucleus(NucleusId("nucleus"))
+    nucleus.registerLocation("spawn", "Spawn")
+    nucleus.registerLocation("path", "Winding Path")
+    nucleus.connectLocations("spawn", "path")
+
     val processor = GameActionProcessor(nucleus)
     processor.process(
       GameAction(
@@ -109,7 +113,38 @@ class GameDomainTests {
     val interactions = processor.availableInteractions(CharacterId("hero"))
 
     assertEquals(1, interactions.size)
-    assertEquals("move", interactions.single().actionName)
+
+    val move = interactions.single()
+    assertEquals(InteractionId("move"), move.id)
+    assertEquals("Move to a location", move.label)
+    assertEquals(true, move.isMenu)
+    assertEquals(false, move.isExecutable)
+    assertEquals(null, move.actionName)
+    assertEquals(1, move.children.size)
+
+    val destination = move.children.single()
+    assertEquals(InteractionId("move_to_path"), destination.id)
+    assertEquals("Winding Path", destination.label)
+    assertEquals("move", destination.actionName)
+    assertEquals("path", destination.fixedArguments["targetLocationId"])
+    assertEquals(true, destination.isExecutable)
+    assertEquals(emptyList<Interaction>(), destination.children)
+  }
+
+  @Test
+  fun defaultInteractionProvider_offersNoMoveMenuWhenCurrentLocationHasNoOutgoingConnections() {
+    val nucleus = Nucleus(NucleusId("nucleus"))
+
+    val processor = GameActionProcessor(nucleus)
+    processor.process(
+      GameAction(
+        name = "enter_world", actorId = CharacterId("hero"), arguments = mapOf("locationId" to "spawn")
+      )
+    )
+
+    val interactions = processor.availableInteractions(CharacterId("hero"))
+
+    assertEquals(emptyList<Interaction>(), interactions)
   }
 
   @Test

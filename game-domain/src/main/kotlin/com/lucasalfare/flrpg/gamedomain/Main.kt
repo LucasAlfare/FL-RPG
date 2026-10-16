@@ -160,8 +160,8 @@ fun interface InteractionProvider {
 
 class DefaultInteractionProvider : InteractionProvider {
   override fun availableInteractions(characterId: CharacterId, nucleus: Nucleus): List<Interaction> {
-    return if (!nucleus.containsCharacter(characterId)) {
-      listOf(
+    if (!nucleus.containsCharacter(characterId)) {
+      return listOf(
         Interaction(
           id = InteractionId("enter_world"),
           label = "Enter the world",
@@ -169,16 +169,37 @@ class DefaultInteractionProvider : InteractionProvider {
           fixedArguments = mapOf("locationId" to "spawn")
         )
       )
-    } else {
-      listOf(
-        Interaction(
-          id = InteractionId("move"),
-          label = "Move to a location",
-          actionName = "move",
-          requiredArgumentNames = listOf("targetLocationId")
-        )
-      )
     }
+
+    val entityId = WorldEntityId(characterId.value)
+
+    if (nucleus.world.getMovement(entityId)?.isInProgress == true) {
+      return emptyList()
+    }
+
+    val currentLocationId = nucleus.world.state.getLocation(entityId) ?: return emptyList()
+
+    val destinationInteractions =
+      nucleus.world.graph.getOutgoingConnections(currentLocationId).distinctBy { it.to }.map { connection ->
+          val destinationId = connection.to
+          val displayName = nucleus.getLocationDisplayName(destinationId) ?: destinationId.value
+          Interaction(
+            id = InteractionId("move_to_${destinationId.value}"),
+            label = displayName,
+            actionName = "move",
+            fixedArguments = mapOf("targetLocationId" to destinationId.value)
+          )
+        }
+
+    if (destinationInteractions.isEmpty()) {
+      return emptyList()
+    }
+
+    return listOf(
+      Interaction(
+        id = InteractionId("move"), label = "Move to a location", children = destinationInteractions
+      )
+    )
   }
 }
 
