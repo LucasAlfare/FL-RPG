@@ -9,10 +9,16 @@ import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
+
+private const val SIMULATION_TICK_INTERVAL_MS: Long = 1_000L
+private const val SIMULATION_TICKS_PER_INTERVAL: Long = 1L
 
 private val DefaultPreferredInteractionShortcuts: Map<String, String> = mapOf(
   "move" to "M"
@@ -845,6 +851,15 @@ fun Application.module(
   )
 
   install(WebSockets)
+
+  launch {
+    while (isActive) {
+      delay(SIMULATION_TICK_INTERVAL_MS)
+      advanceTimeAndDistribute(
+        ticks = SIMULATION_TICKS_PER_INTERVAL, registry = connectionRegistry, actionProcessor = activeActionProcessor
+      )
+    }
+  }
 
   routing {
     get("/health") {
