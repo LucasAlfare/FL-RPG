@@ -503,6 +503,27 @@ suspend fun handleConnection(
                 )
               }
 
+              interaction.isMenu -> {
+                val preparedMenu = presentationPreparer.prepare(
+                  interactions = interaction.children, baseRevision = offerState.revision
+                )
+                offerState.replaceOffers(preparedMenu.offered, preparedMenu.document.revision)
+
+                val menuSnapshot = presentationPreparer.toSnapshot(
+                  sessionId = currentSessionId, prepared = preparedMenu
+                )
+                connection.send(menuSnapshot)
+
+                ServerAccepted(
+                  metadata = MessageMetadata(
+                    messageId = MessageId(UUID.randomUUID().toString()),
+                    sessionId = currentSessionId,
+                    sequence = Sequence.ZERO,
+                    correlationId = correlationId
+                  ), detail = "Menu '${interaction.label}' opened."
+                )
+              }
+
               interaction.actionName == null -> {
                 ServerRejected(
                   metadata = MessageMetadata(
