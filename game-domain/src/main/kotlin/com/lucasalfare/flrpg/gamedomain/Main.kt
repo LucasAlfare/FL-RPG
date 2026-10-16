@@ -697,6 +697,22 @@ class GameActionProcessor(
     )
   }
 
+  fun getCharacterMovementProgressDetails(characterId: CharacterId): Triple<String, Double, SimulationSeconds?>? =
+    synchronized(nucleus.stateLock) {
+      val entityId = WorldEntityId(characterId.value)
+      val movement = nucleus.world.getMovement(entityId) ?: return@synchronized null
+      if (!movement.isInProgress) return@synchronized null
+
+      val activity = nucleus.getActivityForMovement(entityId) ?: return@synchronized null
+      val currentSimulationTime = SimulationSeconds(nucleus.world.clock.currentInstant.value)
+      val progress = nucleus.getActivityProgress(activity.id, currentSimulationTime)
+
+      val remainingTicks =
+        (activity.duration.value - (currentSimulationTime.value - activity.startTime.value)).coerceAtLeast(0L)
+
+      Triple(activity.description, progress, SimulationSeconds(remainingTicks))
+    }
+
   fun getCharacterLocationDisplayName(characterId: CharacterId): String? = synchronized(nucleus.stateLock) {
     val entityId = WorldEntityId(characterId.value)
     val locationId = nucleus.world.state.getLocation(entityId) ?: return@synchronized null

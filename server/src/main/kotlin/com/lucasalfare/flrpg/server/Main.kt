@@ -485,19 +485,56 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
   for (audience in audiences) {
     for (fact in listOf(audience.fact)) {
       if (fact.name == "character_movement_completed" || fact.name == "character_movement_interrupted" || fact.name == "activity_cancelled") {
-        val characterIdStr = fact.arguments["characterId"] as? String
+        fact.arguments["characterId"] as? String
         val activityIdStr = fact.arguments["activityId"] as? String
         if (activityIdStr != null) {
           correlationRegistry.removeByActivityId(ActivityId(activityIdStr))
-        } else if (characterIdStr != null) {
-          // Fallback cleanup if activityId wasn't directly in facts
-          val charId = CharacterId(characterIdStr)
-          val conn = registry.findByCharacterId(charId)
-          if (conn != null && conn.sessionId != null) {
-            // cleanup correlation associated with session if needed
-          }
         }
       }
+    }
+  }
+
+  for (connection in registry.activeConnections()) {
+    val characterId = connection.characterId ?: continue
+    val sessionId = connection.sessionId ?: continue
+
+    val progressDetails = actionProcessor.getCharacterMovementProgressDetails(characterId)
+    if (progressDetails != null) {
+      val (description, progress, remaining) = progressDetails
+      val percent = (progress * 100).toInt().coerceIn(0, 100)
+      val remainingText = remaining?.let { " · Restante: ${it.value}s" } ?: ""
+
+      val offerState = offerRegistry.find(sessionId) ?: continue
+      val activityBlockId = BlockId("current_activity")
+
+      val activityBlock = PresentationBlock(
+        id = activityBlockId, content = BlockContent.Text(
+          text = "⏳ $description ($percent% concluído$remainingText)", style = TextStyle.HIGHLIGHT
+        ), title = "Atividade Actual", region = PresentationRegion.MAIN
+      )
+
+      val interactions = actionProcessor.availableInteractions(characterId)
+      val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
+      val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+
+      val prepared = presentationPreparer.prepareWithLocation(
+        interactions = interactions,
+        locationName = locationName,
+        movementDestinationName = movementDestinationName,
+        baseRevision = offerState.revision
+      )
+
+      val updatedBlocks = prepared.document.blocks + activityBlock
+      val finalDoc = prepared.document.copy(blocks = updatedBlocks)
+
+      offerState.replaceOffers(prepared.offered, finalDoc.revision)
+
+      val snapshot = PresentationSnapshot(
+        metadata = MessageMetadata(
+          messageId = MessageId(UUID.randomUUID().toString()), sessionId = sessionId, sequence = Sequence.ZERO
+        ), document = finalDoc
+      )
+      connection.send(snapshot)
     }
   }
 
