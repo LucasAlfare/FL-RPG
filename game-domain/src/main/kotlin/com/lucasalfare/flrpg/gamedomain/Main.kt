@@ -10,6 +10,40 @@ value class CharacterId(val value: String)
 @JvmInline
 value class NucleusId(val value: String)
 
+@JvmInline
+value class DistanceCm(val value: Long) {
+  init {
+    require(value >= 0L) { "Distance cannot be negative." }
+  }
+}
+
+@JvmInline
+value class SpeedCmPerSecond(val value: Long) {
+  init {
+    require(value > 0L) { "Speed must be positive." }
+  }
+}
+
+@JvmInline
+value class SimulationSeconds(val value: Long) {
+  init {
+    require(value >= 0L) { "Simulation duration cannot be negative." }
+  }
+}
+
+fun calculateTravelDuration(distance: DistanceCm, speed: SpeedCmPerSecond): SimulationSeconds {
+  if (distance.value == 0L) {
+    return SimulationSeconds(0L)
+  }
+  val seconds = (distance.value + speed.value - 1L) / speed.value
+  return SimulationSeconds(seconds.coerceAtLeast(1L))
+}
+
+fun SimulationSeconds.toWorldDuration(): WorldDuration = WorldDuration(value)
+
+private const val LEGACY_DISTANCE_UNIT_CM = 100L
+private const val LEGACY_SPEED_UNIT_CM_PER_SECOND = 100L
+
 data class Character(
   val id: CharacterId, val name: String
 )
@@ -23,7 +57,7 @@ class Nucleus(
 
   private val _locationDisplayNames = mutableMapOf<WorldLocationId, String>()
 
-  private val _connectionDistances = mutableMapOf<WorldConnectionId, Long>()
+  private val _connectionDistances = mutableMapOf<WorldConnectionId, DistanceCm>()
 
   private val _characterSpeeds = mutableMapOf<CharacterId, Long>()
 
@@ -88,15 +122,24 @@ class Nucleus(
       )
 
       world.graph.registerConnection(connection)
-      _connectionDistances[connection.id] = distance
+      _connectionDistances[connection.id] = DistanceCm(distance * LEGACY_DISTANCE_UNIT_CM)
     }
   }
 
   fun getConnectionDistance(connectionId: WorldConnectionId): Long = synchronized(stateLock) {
-    _connectionDistances[connectionId] ?: DEFAULT_DISTANCE
+    val stored = _connectionDistances[connectionId]
+    if (stored != null) {
+      stored.value / LEGACY_DISTANCE_UNIT_CM
+    } else {
+      DEFAULT_DISTANCE
+    }
   }
 
   fun getConnectionDistance(connectionId: String): Long = getConnectionDistance(WorldConnectionId(connectionId))
+
+  fun getConnectionDistanceCm(connectionId: WorldConnectionId): DistanceCm = synchronized(stateLock) {
+    _connectionDistances[connectionId] ?: DistanceCm(DEFAULT_DISTANCE * LEGACY_DISTANCE_UNIT_CM)
+  }
 
   fun getCharacterSpeed(characterId: CharacterId): Long = synchronized(stateLock) {
     _characterSpeeds[characterId] ?: DEFAULT_SPEED
@@ -345,15 +388,17 @@ class MoveHandler : GameActionHandler {
       "No valid path to location '${destinationId.value}'"
     )
 
-    val totalDistance = path.connections.sumOf { connection ->
+    val totalDistanceLegacy = path.connections.sumOf { connection ->
       nucleus.getConnectionDistance(connection.id)
     }
 
-    val speed = nucleus.getCharacterSpeed(action.actorId).coerceAtLeast(Nucleus.DEFAULT_SPEED)
+    val totalDistance = DistanceCm(totalDistanceLegacy * LEGACY_DISTANCE_UNIT_CM)
 
-    val durationTicks = ((totalDistance + speed - 1L) / speed).coerceAtLeast(1L)
+    val speedLegacy = nucleus.getCharacterSpeed(action.actorId).coerceAtLeast(Nucleus.DEFAULT_SPEED)
+    val speed = SpeedCmPerSecond(speedLegacy * LEGACY_SPEED_UNIT_CM_PER_SECOND)
 
-    val duration = WorldDuration(durationTicks)
+    val simulationDuration = calculateTravelDuration(totalDistance, speed)
+    val duration = simulationDuration.toWorldDuration()
 
     val startInstant = nucleus.world.clock.currentInstant
 
