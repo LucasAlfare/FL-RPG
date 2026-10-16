@@ -243,9 +243,20 @@ class ClientPresentationState {
     inputBeforeHistory = ""
   }
 
-  fun submitCommand(commandSink: (String) -> Unit) {
+  fun submitCommand(
+    selectionSink: (String) -> Unit, commandSink: (String) -> Unit
+  ) {
     val command = input.trim()
     if (command.isEmpty()) return
+
+    val activeChoice = findActiveChoice(command)
+
+    if (activeChoice != null) {
+      rememberCommand(command)
+      selectionSink(activeChoice.id)
+      input = ""
+      return
+    }
 
     if (handleClientCommand(command)) {
       input = ""
@@ -279,6 +290,15 @@ class ClientPresentationState {
       inputBeforeHistory = ""
     }
     return true
+  }
+
+  private fun findActiveChoice(input: String): Choice? {
+    val activeChoices =
+      document.blocks.map { it.content }.filterIsInstance<BlockContent.Choices>().flatMap { it.choices }
+        .filter { it.enabled }
+
+    return activeChoices.firstOrNull { it.shortcut.equals(input, ignoreCase = true) }
+      ?: activeChoices.firstOrNull { it.text.equals(input, ignoreCase = true) }
   }
 
   private fun handleClientCommand(command: String): Boolean {
@@ -322,32 +342,9 @@ fun main() = application {
       connection.connect(scope)
     }
 
-    TerminalApp(state, onCommand = { text ->
+    TerminalApp(state = state, onSelection = { choiceId -> connection.sendSelection(choiceId) }, onCommand = { text ->
       val trimmed = text.trim()
       if (trimmed.isEmpty()) return@TerminalApp
-
-      val activeChoices =
-        state.document.blocks.map { it.content }.filterIsInstance<BlockContent.Choices>().flatMap { it.choices }
-          .filter { it.enabled }
-
-      val matchedByShortcut = activeChoices.firstOrNull {
-        it.shortcut.equals(trimmed, ignoreCase = true)
-      }
-
-      if (matchedByShortcut != null) {
-        connection.sendSelection(matchedByShortcut.id)
-        return@TerminalApp
-      }
-
-      val matchedByText = activeChoices.firstOrNull {
-        it.text.equals(trimmed, ignoreCase = true)
-      }
-
-      if (matchedByText != null) {
-        connection.sendSelection(matchedByText.id)
-        return@TerminalApp
-      }
-
       connection.sendTextCommand(trimmed)
     })
   }
@@ -355,7 +352,7 @@ fun main() = application {
 
 @Composable
 private fun TerminalApp(
-  state: ClientPresentationState, onCommand: (String) -> Unit
+  state: ClientPresentationState, onSelection: (String) -> Unit, onCommand: (String) -> Unit
 ) {
   val theme = if (state.darkThemeEnabled) darkTheme else lightTheme
   Column(
@@ -388,7 +385,7 @@ private fun TerminalApp(
     SelectionContainer {
       Text(state.connectionMessage, color = theme.muted, fontFamily = mono, fontSize = 12.sp)
     }
-    CommandLine(state, theme, onCommand)
+    CommandLine(state, theme, onSelection, onCommand)
   }
 }
 
@@ -469,7 +466,7 @@ private fun PresentationBlockContent(content: BlockContent, theme: TerminalTheme
 
 @Composable
 private fun CommandLine(
-  state: ClientPresentationState, theme: TerminalTheme, onCommand: (String) -> Unit
+  state: ClientPresentationState, theme: TerminalTheme, onSelection: (String) -> Unit, onCommand: (String) -> Unit
 ) {
   Row(
     Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
@@ -489,7 +486,7 @@ private fun CommandLine(
         }
       }.onKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-          state.submitCommand(onCommand)
+          state.submitCommand(onSelection, onCommand)
           true
         } else false
       }.focusable(),
