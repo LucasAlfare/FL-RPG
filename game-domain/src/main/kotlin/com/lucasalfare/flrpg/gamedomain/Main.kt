@@ -44,8 +44,21 @@ fun SimulationSeconds.toWorldDuration(): WorldDuration = WorldDuration(value)
 private const val LEGACY_DISTANCE_UNIT_CM = 100L
 private const val LEGACY_SPEED_UNIT_CM_PER_SECOND = 100L
 
+data class CharacterAttributes(
+  val baseSpeed: SpeedCmPerSecond
+) {
+  val effectiveSpeed: SpeedCmPerSecond
+    get() = baseSpeed
+
+  companion object {
+    val DEFAULT = CharacterAttributes(
+      baseSpeed = SpeedCmPerSecond(Nucleus.DEFAULT_SPEED * LEGACY_SPEED_UNIT_CM_PER_SECOND)
+    )
+  }
+}
+
 data class Character(
-  val id: CharacterId, val name: String
+  val id: CharacterId, val name: String, val attributes: CharacterAttributes = CharacterAttributes.DEFAULT
 )
 
 class Nucleus(
@@ -53,46 +66,54 @@ class Nucleus(
 ) {
   internal val stateLock = Any()
 
-  private val _characters = mutableSetOf<CharacterId>()
+  private val _characters = mutableMapOf<CharacterId, Character>()
 
   private val _locationDisplayNames = mutableMapOf<WorldLocationId, String>()
 
   private val _connectionDistances = mutableMapOf<WorldConnectionId, DistanceCm>()
 
-  private val _characterSpeeds = mutableMapOf<CharacterId, Long>()
-
   val characters: Set<CharacterId>
     get() = synchronized(stateLock) {
-      _characters.toSet()
+      _characters.keys.toSet()
     }
 
-  fun registerCharacter(characterId: CharacterId) {
+  fun registerCharacter(character: Character) {
     synchronized(stateLock) {
-      _characters.add(characterId)
-      _characterSpeeds.putIfAbsent(characterId, DEFAULT_SPEED)
+      _characters[character.id] = character
     }
+  }
+
+  fun registerCharacter(characterId: CharacterId) {
+    registerCharacter(
+      Character(
+        id = characterId, name = characterId.value, attributes = CharacterAttributes.DEFAULT
+      )
+    )
   }
 
   fun unregisterCharacter(characterId: CharacterId) {
     synchronized(stateLock) {
       world.removeEntity(WorldEntityId(characterId.value))
       _characters.remove(characterId)
-      _characterSpeeds.remove(characterId)
     }
   }
 
   fun containsCharacter(characterId: CharacterId): Boolean = synchronized(stateLock) {
-    _characters.contains(characterId)
+    _characters.containsKey(characterId)
+  }
+
+  fun getCharacter(characterId: CharacterId): Character? = synchronized(stateLock) {
+    _characters[characterId]
   }
 
   fun getCharactersAtLocation(
     locationId: WorldLocationId
   ): List<CharacterId> = synchronized(stateLock) {
-    _characters.filter { characterId ->
+    _characters.values.filter { character ->
       world.state.getLocation(
-        WorldEntityId(characterId.value)
+        WorldEntityId(character.id.value)
       ) == locationId
-    }
+    }.map { it.id }
   }
 
   fun registerLocation(locationId: String, displayName: String = locationId) {
@@ -142,13 +163,24 @@ class Nucleus(
   }
 
   fun getCharacterSpeed(characterId: CharacterId): Long = synchronized(stateLock) {
-    _characterSpeeds[characterId] ?: DEFAULT_SPEED
+    val character = _characters[characterId] ?: return DEFAULT_SPEED
+    character.attributes.effectiveSpeed.value / LEGACY_SPEED_UNIT_CM_PER_SECOND
+  }
+
+  fun getCharacterSpeedCm(characterId: CharacterId): SpeedCmPerSecond = synchronized(stateLock) {
+    val character = _characters[characterId] ?: CharacterAttributes.DEFAULT.effectiveSpeed
+    val speed = (character as? Character)?.attributes?.effectiveSpeed ?: character as SpeedCmPerSecond
+    speed
   }
 
   fun setCharacterSpeed(characterId: CharacterId, speed: Long) {
     require(speed > 0L) { "Character speed must be positive." }
     synchronized(stateLock) {
-      _characterSpeeds[characterId] = speed
+      val character = _characters[characterId] ?: return@synchronized
+      val updatedAttributes = character.attributes.copy(
+        baseSpeed = SpeedCmPerSecond(speed * LEGACY_SPEED_UNIT_CM_PER_SECOND)
+      )
+      _characters[characterId] = character.copy(attributes = updatedAttributes)
     }
   }
 
@@ -394,8 +426,7 @@ class MoveHandler : GameActionHandler {
 
     val totalDistance = DistanceCm(totalDistanceLegacy * LEGACY_DISTANCE_UNIT_CM)
 
-    val speedLegacy = nucleus.getCharacterSpeed(action.actorId).coerceAtLeast(Nucleus.DEFAULT_SPEED)
-    val speed = SpeedCmPerSecond(speedLegacy * LEGACY_SPEED_UNIT_CM_PER_SECOND)
+    val speed = nucleus.getCharacterSpeedCm(action.actorId)
 
     val simulationDuration = calculateTravelDuration(totalDistance, speed)
     val duration = simulationDuration.toWorldDuration()
