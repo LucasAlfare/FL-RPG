@@ -30,14 +30,19 @@ import kotlinx.coroutines.launch
 import java.util.*
 import com.lucasalfare.flrpg.communicationprotocol.TextStyle as ProtocolTextStyle
 
+// connection
+
 class ClientConnection(
-  private val state: ClientPresentationState, private val serverUrl: String = "ws://localhost:8080/game"
+  private val onServerMessage: (ServerMessage) -> Unit,
+  private val onConnectionMessage: (String) -> Unit,
+  private val onOperationStarted: (MessageId) -> Unit,
+  private val serverUrl: String = "ws://localhost:8080/game",
 ) {
   private val client = HttpClient(CIO) {
     install(WebSockets)
   }
 
-  private var sessionId: SessionId = SessionId(UUID.randomUUID().toString())
+  private val sessionId = SessionId(UUID.randomUUID().toString())
 
   private var nextSequence: Sequence = ZERO
   private var handshakeDone = false
@@ -49,14 +54,19 @@ class ClientConnection(
     if (job?.isActive == true) return
 
     job = scope.launch {
+      handshakeDone = false
+
       try {
-        state.connectionMessage = "A LIGAR..."
+        onConnectionMessage("A LIGAR...")
+
         client.webSocket(serverUrl) {
           session = this
           performHandshake()
+
           for (frame in incoming) {
             if (frame is Frame.Text) {
               val message = frame.readText().toProtocolMessage<ProtocolMessage>()
+
               if (message is ServerMessage) {
                 receiveFromNetwork(message)
               }
@@ -64,10 +74,11 @@ class ClientConnection(
           }
         }
       } catch (e: Exception) {
-        state.connectionMessage = "FALHA NA LIGAÇÃO · ${e.message}"
+        onConnectionMessage("FALHA NA LIGAÇÃO · ${e.message}")
       } finally {
         session = null
-        state.connectionMessage = "OFFLINE · sem ligação ao servidor"
+        handshakeDone = false
+        onConnectionMessage("OFFLINE · sem ligação ao servidor")
       }
     }
   }
@@ -79,128 +90,124 @@ class ClientConnection(
 
   fun sendSelection(choiceId: String) {
     val currentSession = session
+
     if (currentSession == null || !handshakeDone) {
-      state.connectionMessage = "NÃO PRONTO · handshake pendente"
+      onConnectionMessage("NÃO PRONTO · handshake pendente")
       return
     }
 
     val metadata = nextMetadata()
     val selection = ClientSelection(
-      metadata = metadata, choiceId = choiceId
+      metadata = metadata,
+      choiceId = choiceId,
     )
 
-    state.activeOperationMessageId = metadata.messageId
-    state.connectionMessage = "A ENVIAR SELEÇÃO · $choiceId (seq ${selection.sequence.value})"
+    onOperationStarted(metadata.messageId)
+    onConnectionMessage(
+      "A ENVIAR SELEÇÃO · $choiceId (seq ${selection.sequence.value})"
+    )
 
     currentSession.launch {
       try {
         currentSession.send(Frame.Text(selection.toJson()))
       } catch (e: Exception) {
-        state.connectionMessage = "FALHA NO ENVIO · ${e.message}"
+        onConnectionMessage("FALHA NO ENVIO · ${e.message}")
       }
     }
   }
 
   fun sendTextCommand(rawText: String) {
     val currentSession = session
+
     if (currentSession == null || !handshakeDone) {
-      state.connectionMessage = "NÃO PRONTO · handshake pendente"
+      onConnectionMessage("NÃO PRONTO · handshake pendente")
       return
     }
 
     val metadata = nextMetadata()
     val textCommand = ClientTextCommand(
-      metadata = metadata, rawText = rawText
+      metadata = metadata,
+      rawText = rawText,
     )
 
-    state.connectionMessage = "A ENVIAR COMANDO · $rawText (seq ${textCommand.sequence.value})"
+    onConnectionMessage(
+      "A ENVIAR COMANDO · $rawText (seq ${textCommand.sequence.value})"
+    )
 
     currentSession.launch {
       try {
         currentSession.send(Frame.Text(textCommand.toJson()))
       } catch (e: Exception) {
-        state.connectionMessage = "FALHA NO ENVIO · ${e.message}"
+        onConnectionMessage("FALHA NO ENVIO · ${e.message}")
       }
     }
   }
 
   fun sendCancel(targetMessageId: MessageId) {
     val currentSession = session
+
     if (currentSession == null || !handshakeDone) {
-      state.connectionMessage = "NÃO PRONTO · handshake pendente"
+      onConnectionMessage("NÃO PRONTO · handshake pendente")
       return
     }
 
     val cancelMessage = ClientCancel(
-      metadata = nextMetadata(), targetMessageId = targetMessageId
+      metadata = nextMetadata(),
+      targetMessageId = targetMessageId,
     )
 
-    state.connectionMessage = "A ENVIAR CANCELAMENTO · alvo ${targetMessageId.value}"
+    onConnectionMessage(
+      "A ENVIAR CANCELAMENTO · alvo ${targetMessageId.value}"
+    )
 
     currentSession.launch {
       try {
         currentSession.send(Frame.Text(cancelMessage.toJson()))
       } catch (e: Exception) {
-        state.connectionMessage = "FALHA NO ENVIO · ${e.message}"
+        onConnectionMessage("FALHA NO ENVIO · ${e.message}")
       }
     }
   }
 
-  fun receiveFromNetwork(message: ServerMessage) {
+  private fun receiveFromNetwork(message: ServerMessage) {
     when (message) {
       is ServerWelcome -> {
         nextSequence = ZERO
         handshakeDone = true
-        state.receive(message)
+        onServerMessage(message)
       }
 
-      else -> state.receive(message)
+      else -> onServerMessage(message)
     }
   }
 
   private fun nextMetadata(
-    correlationId: CorrelationId? = null
+    correlationId: CorrelationId? = null,
   ): MessageMetadata {
     val metadata = MessageMetadata(
       messageId = MessageId(UUID.randomUUID().toString()),
       sessionId = sessionId,
       sequence = nextSequence,
-      correlationId = correlationId
+      correlationId = correlationId,
     )
+
     nextSequence = nextSequence.next()
     return metadata
   }
 
   fun close() {
     job?.cancel()
+    session = null
+    handshakeDone = false
     client.close()
   }
 }
 
-private data class TerminalTheme(
-  val background: Color,
-  val foreground: Color,
-  val muted: Color,
-  val accent: Color,
-  val border: Color,
-)
+//state
 
-private val darkTheme = TerminalTheme(
-  background = Color(0xFF111318),
-  foreground = Color(0xFFD7DCE5),
-  muted = Color(0xFF778195),
-  accent = Color(0xFF80C8A0),
-  border = Color(0xFF394252),
-)
-private val lightTheme = TerminalTheme(
-  background = Color(0xFFF4F3EE),
-  foreground = Color(0xFF282B32),
-  muted = Color(0xFF74777D),
-  accent = Color(0xFF356C53),
-  border = Color(0xFFB9B8B0),
-)
-
-private enum class ClientScreen { PRESENTATION, MENU }
+private enum class ClientScreen {
+  PRESENTATION, MENU,
+}
 
 class ClientPresentationState {
 
@@ -208,33 +215,50 @@ class ClientPresentationState {
 
   private val recentHistory = mutableStateListOf<FeedItem>()
 
-  private val clientHistoryBlockId: BlockId = BlockId("client_recent_history")
+  private val clientHistoryBlockId = BlockId("client_recent_history")
 
   var activeOperationMessageId: MessageId? by mutableStateOf(null)
 
   val document: PresentationDocument
     get() {
       val base = serverDocument
-      val otherBlocks = base.blocks.filter { it.region != PresentationRegion.HISTORY }
+      val otherBlocks = base.blocks.filter {
+        it.region != PresentationRegion.HISTORY
+      }
+
       val historyBlock = PresentationBlock(
-        id = clientHistoryBlockId, content = BlockContent.Feed(
-          feedId = "client_recent_events", items = recentHistory.toList(), ordering = FeedOrdering.CHRONOLOGICAL
-        ), title = null, region = PresentationRegion.HISTORY
+        id = clientHistoryBlockId,
+        content = BlockContent.Feed(
+          feedId = "client_recent_events",
+          items = recentHistory.toList(),
+          ordering = FeedOrdering.CHRONOLOGICAL,
+        ),
+        title = null,
+        region = PresentationRegion.HISTORY,
       )
+
       return base.copy(blocks = otherBlocks + historyBlock)
     }
 
   var darkThemeEnabled by mutableStateOf(true)
     private set
+
   private var screen by mutableStateOf(ClientScreen.PRESENTATION)
-  val isMenuOpen: Boolean get() = screen == ClientScreen.MENU
+
+  val isMenuOpen: Boolean
+    get() = screen == ClientScreen.MENU
+
   var input by mutableStateOf("")
     private set
-  var connectionMessage by mutableStateOf("OFFLINE · sem ligação ao servidor")
+
+  var connectionMessage by mutableStateOf(
+    "OFFLINE · sem ligação ao servidor"
+  )
 
   private val commandHistory = mutableStateListOf<String>()
+
   private var historyIndex by mutableStateOf<Int?>(null)
-  private var inputBeforeHistory by mutableStateOf("")
+  private var inputBeforeHistory = ""
 
   fun receive(message: ServerMessage) {
     when (message) {
@@ -257,9 +281,12 @@ class ClientPresentationState {
 
       is ServerCompleted -> {
         val factsSummary = message.facts.joinToString { it.name }
+
         connectionMessage = "CONCLUÍDO · factos: $factsSummary"
+
         message.facts.forEach { fact ->
           appendHistory(fact.name, fact.arguments)
+
           if (fact.name == "character_movement_completed" || fact.name == "character_movement_interrupted" || fact.name == "activity_cancelled") {
             activeOperationMessageId = null
           }
@@ -273,13 +300,18 @@ class ClientPresentationState {
 
       is PresentationSnapshot -> {
         serverDocument = message.document
+
         connectionMessage = "CONECTADO · revisão de apresentação ${serverDocument.revision.value}"
       }
 
       is PresentationPatch -> {
-        val updatedDocument = runCatching { serverDocument.applyPatch(message) }
+        val updatedDocument = runCatching {
+          serverDocument.applyPatch(message)
+        }
+
         updatedDocument.onSuccess {
           serverDocument = it
+
           connectionMessage = "CONECTADO · revisão de apresentação ${serverDocument.revision.value}"
         }.onFailure {
           connectionMessage = "APRESENTAÇÃO DESACTUALIZADA · snapshot necessário"
@@ -296,35 +328,56 @@ class ClientPresentationState {
         activeOperationMessageId = null
       }
 
-      is ServerProtocolError -> connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
+      is ServerProtocolError -> {
+        connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
+      }
     }
   }
 
-  private fun appendHistory(factName: String, args: Map<String, String>) {
+  private fun appendHistory(
+    factName: String,
+    args: Map<String, String>,
+  ) {
     val text = describeFact(factName, args)
+
     if (text.isBlank()) return
 
     val entryId = "hist_${factName}_${recentHistory.size}_${System.nanoTime()}"
 
-    if (recentHistory.size >= 20) recentHistory.removeAt(0)
+    if (recentHistory.size >= 20) {
+      recentHistory.removeAt(0)
+    }
+
     recentHistory.add(
       FeedItem(
-        id = entryId, text = text, style = ProtocolTextStyle.MUTED
+        id = entryId,
+        text = text,
+        style = ProtocolTextStyle.MUTED,
       )
     )
   }
 
-  private fun describeFact(name: String, args: Map<String, String>): String {
+  private fun describeFact(
+    name: String,
+    args: Map<String, String>,
+  ): String {
     val location = args["locationName"] ?: args["locationId"] ?: "an unknown location"
+
     val origin = args["originLocationName"] ?: args["originLocationId"] ?: "an unknown origin"
+
     val from = args["fromLocationName"] ?: args["fromLocationId"] ?: "an unknown origin"
+
     val to = args["toLocationName"] ?: args["toLocationId"] ?: "an unknown destination"
 
     return when (name) {
       "character_entered" -> "You entered the world at $location."
+
       "character_moved" -> "You began travelling from $from to $to."
+
       "character_movement_completed" -> "You arrived at $location (from $origin)."
+
       "character_movement_interrupted" -> "Your movement was interrupted; you are at $location."
+
       else -> name
     }
   }
@@ -336,9 +389,12 @@ class ClientPresentationState {
   }
 
   fun submitCommand(
-    selectionSink: (String) -> Unit, commandSink: (String) -> Unit, cancelSink: (MessageId) -> Unit
+    selectionSink: (String) -> Unit,
+    commandSink: (String) -> Unit,
+    cancelSink: (MessageId) -> Unit,
   ) {
     val command = input.trim()
+
     if (command.isEmpty()) return
 
     val activeChoice = findActiveChoice(command)
@@ -362,17 +418,23 @@ class ClientPresentationState {
 
   fun previousCommand(): Boolean {
     if (commandHistory.isEmpty()) return false
-    val nextIndex = historyIndex?.let { (it - 1).coerceAtLeast(0) } ?: kotlin.run {
+
+    val nextIndex = historyIndex?.let {
+      (it - 1).coerceAtLeast(0)
+    } ?: run {
       inputBeforeHistory = input
       commandHistory.lastIndex
     }
+
     historyIndex = nextIndex
     input = commandHistory[nextIndex]
+
     return true
   }
 
   fun nextCommand(): Boolean {
     val currentIndex = historyIndex ?: return false
+
     if (currentIndex < commandHistory.lastIndex) {
       historyIndex = currentIndex + 1
       input = commandHistory[currentIndex + 1]
@@ -381,6 +443,7 @@ class ClientPresentationState {
       input = inputBeforeHistory
       inputBeforeHistory = ""
     }
+
     return true
   }
 
@@ -389,11 +452,17 @@ class ClientPresentationState {
       document.blocks.map { it.content }.filterIsInstance<BlockContent.Choices>().flatMap { it.choices }
         .filter { it.enabled }
 
-    return activeChoices.firstOrNull { it.shortcut.equals(input, ignoreCase = true) }
-      ?: activeChoices.firstOrNull { it.text.equals(input, ignoreCase = true) }
+    return activeChoices.firstOrNull {
+      it.shortcut.equals(input, ignoreCase = true)
+    } ?: activeChoices.firstOrNull {
+      it.text.equals(input, ignoreCase = true)
+    }
   }
 
-  private fun handleClientCommand(command: String, cancelSink: (MessageId) -> Unit): Boolean {
+  private fun handleClientCommand(
+    command: String,
+    cancelSink: (MessageId) -> Unit,
+  ): Boolean {
     return when (command.uppercase()) {
       "M", "MENU" -> {
         screen = ClientScreen.MENU
@@ -405,18 +474,24 @@ class ClientPresentationState {
         true
       }
 
-      "T", "TEMA" -> if (screen == ClientScreen.MENU) {
-        darkThemeEnabled = !darkThemeEnabled
-        true
-      } else false
+      "T", "TEMA" -> {
+        if (screen == ClientScreen.MENU) {
+          darkThemeEnabled = !darkThemeEnabled
+          true
+        } else {
+          false
+        }
+      }
 
       "CANCEL", "CANCELAR" -> {
         val targetId = activeOperationMessageId
+
         if (targetId != null) {
           cancelSink(targetId)
         } else {
           connectionMessage = "NENHUMA ATIVIDADE ATIVA PARA CANCELAR"
         }
+
         true
       }
 
@@ -425,243 +500,488 @@ class ClientPresentationState {
   }
 
   private fun rememberCommand(command: String) {
-    if (commandHistory.size == 20) commandHistory.removeAt(0)
+    if (commandHistory.size == 20) {
+      commandHistory.removeAt(0)
+    }
+
     commandHistory.add(command)
     historyIndex = null
     inputBeforeHistory = ""
   }
 }
 
-private val mono = FontFamily.Monospace
+// UI
 
-fun main() = application {
-  Window(onCloseRequest = ::exitApplication, title = "FL-RPG · terminal") {
-    val state = remember { ClientPresentationState() }
-    val scope = rememberCoroutineScope()
-    val connection = remember { ClientConnection(state) }
+private object ClientUi {
 
-    LaunchedEffect(Unit) {
-      connection.connect(scope)
-    }
+  private data class TerminalTheme(
+    val background: Color,
+    val foreground: Color,
+    val muted: Color,
+    val accent: Color,
+    val border: Color,
+  )
 
-    TerminalApp(state = state, onSelection = { choiceId -> connection.sendSelection(choiceId) }, onCommand = { text ->
-      val trimmed = text.trim()
-      if (trimmed.isEmpty()) return@TerminalApp
-      connection.sendTextCommand(trimmed)
-    }, onCancel = { targetMessageId ->
-      connection.sendCancel(targetMessageId)
-    })
-  }
-}
+  private val darkTheme = TerminalTheme(
+    background = Color(0xFF111318),
+    foreground = Color(0xFFD7DCE5),
+    muted = Color(0xFF778195),
+    accent = Color(0xFF80C8A0),
+    border = Color(0xFF394252),
+  )
 
-@Composable
-private fun TerminalApp(
-  state: ClientPresentationState,
-  onSelection: (String) -> Unit,
-  onCommand: (String) -> Unit,
-  onCancel: (MessageId) -> Unit
-) {
-  val theme = if (state.darkThemeEnabled) darkTheme else lightTheme
-  Column(
-    Modifier.fillMaxSize().background(theme.background).padding(horizontal = 18.dp, vertical = 12.dp),
-    verticalArrangement = Arrangement.spacedBy(10.dp),
+  private val lightTheme = TerminalTheme(
+    background = Color(0xFFF4F3EE),
+    foreground = Color(0xFF282B32),
+    muted = Color(0xFF74777D),
+    accent = Color(0xFF356C53),
+    border = Color(0xFFB9B8B0),
+  )
+
+  private val mono = FontFamily.Monospace
+
+  @Composable
+  fun TerminalApp(
+    state: ClientPresentationState,
+    onSelection: (String) -> Unit,
+    onCommand: (String) -> Unit,
+    onCancel: (MessageId) -> Unit,
   ) {
-    SelectionContainer {
-      Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-          Text("FL-RPG", color = theme.accent, fontSize = 18.sp, fontFamily = mono, fontWeight = FontWeight.Bold)
-          Text("  ·  cliente textual", color = theme.muted, fontSize = 13.sp, fontFamily = mono)
-          Spacer(Modifier.weight(1f))
+    val theme = if (state.darkThemeEnabled) darkTheme else lightTheme
+
+    Column(
+      Modifier.fillMaxSize().background(theme.background).padding(horizontal = 18.dp, vertical = 12.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      SelectionContainer {
+        Column(Modifier.fillMaxWidth()) {
+          Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text(
+              "FL-RPG",
+              color = theme.accent,
+              fontSize = 18.sp,
+              fontFamily = mono,
+              fontWeight = FontWeight.Bold,
+            )
+
+            Text(
+              "  ·  cliente textual",
+              color = theme.muted,
+              fontSize = 13.sp,
+              fontFamily = mono,
+            )
+
+            Spacer(Modifier.weight(1f))
+
+            Text(
+              "[ ${if (state.darkThemeEnabled) "ESCURO" else "CLARO"} ]",
+              color = theme.muted,
+              fontSize = 12.sp,
+              fontFamily = mono,
+            )
+          }
+
           Text(
-            "[ ${if (state.darkThemeEnabled) "ESCURO" else "CLARO"} ]",
-            color = theme.muted,
+            "─".repeat(100),
+            color = theme.border,
             fontSize = 12.sp,
-            fontFamily = mono
+            fontFamily = mono,
+            maxLines = 1,
           )
         }
-        Text("─".repeat(100), color = theme.border, fontSize = 12.sp, fontFamily = mono, maxLines = 1)
       }
-    }
 
-    if (state.isMenuOpen) {
-      MenuScreen(theme, Modifier.weight(1f).fillMaxWidth())
-    } else {
-      PresentationScreen(state.document, theme, Modifier.weight(1f).fillMaxWidth())
-    }
+      if (state.isMenuOpen) {
+        MenuScreen(
+          theme = theme,
+          modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+      } else {
+        PresentationScreen(
+          document = state.document,
+          theme = theme,
+          modifier = Modifier.weight(1f).fillMaxWidth(),
+        )
+      }
 
-    SelectionContainer {
-      Text(state.connectionMessage, color = theme.muted, fontFamily = mono, fontSize = 12.sp)
-    }
-    CommandLine(state, theme, onSelection, onCommand, onCancel)
-  }
-}
+      SelectionContainer {
+        Text(
+          state.connectionMessage,
+          color = theme.muted,
+          fontFamily = mono,
+          fontSize = 12.sp,
+        )
+      }
 
-@Composable
-private fun MenuScreen(theme: TerminalTheme, modifier: Modifier = Modifier) {
-  TerminalTile("MENU", theme, modifier) {
-    SelectionContainer {
-      TextBlock(
-        theme,
-        "[ T ] Alternar tema\n[ V ] Voltar à apresentação\n\nOs comandos do jogo são enviados ao servidor.\nOs atalhos e ações disponíveis são apresentados pelo documento recebido.",
+      CommandLine(
+        state = state,
+        theme = theme,
+        onSelection = onSelection,
+        onCommand = onCommand,
+        onCancel = onCancel,
       )
     }
   }
-}
 
-@Composable
-private fun PresentationScreen(document: PresentationDocument, theme: TerminalTheme, modifier: Modifier = Modifier) {
-  val mainBlocks = document.blocks.filter { it.region == PresentationRegion.MAIN }
-  val sidebarBlocks = document.blocks.filter { it.region == PresentationRegion.SIDEBAR }
-  val historyBlocks = document.blocks.filter { it.region == PresentationRegion.HISTORY }
-
-  Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-    PresentationRegionPane("PRINCIPAL", mainBlocks, theme, Modifier.weight(2.2f).fillMaxHeight())
-    Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-      PresentationRegionPane("BARRA LATERAL", sidebarBlocks, theme, Modifier.weight(1f))
-      PresentationRegionPane("HISTÓRICO", historyBlocks, theme, Modifier.weight(1f))
-    }
-  }
-}
-
-@Composable
-private fun PresentationRegionPane(
-  label: String,
-  blocks: List<PresentationBlock>,
-  theme: TerminalTheme,
-  modifier: Modifier = Modifier,
-) {
-  TerminalTile(label, theme, modifier) {
-    Column(
-      Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-      if (blocks.isEmpty()) {
-        TextBlock(theme, "Sem dados recebidos.", color = theme.muted, small = true)
-      } else {
-        blocks.forEach { block ->
-          block.title?.let { TextBlock(theme, it, color = theme.accent, heading = true) }
-          PresentationBlockContent(block.content, theme)
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun PresentationBlockContent(content: BlockContent, theme: TerminalTheme) {
-  when (content) {
-    is BlockContent.Text -> TextBlock(theme, content.text, color = colorFor(content.style, theme))
-    is BlockContent.ItemsList -> {
-      val prefix = if (content.isOrdered) "" else "- "
-      content.items.forEachIndexed { index, item ->
-        TextBlock(theme, if (content.isOrdered) "${index + 1}. $item" else "$prefix$item")
-      }
-    }
-
-    is BlockContent.Choices -> content.choices.forEach { choice ->
-      val shortcut = choice.shortcut?.let { "[$it] " } ?: ""
-      val state = if (choice.enabled) "" else " (indisponível)"
-      TextBlock(theme, "$shortcut${choice.text}$state", color = if (choice.enabled) theme.foreground else theme.muted)
-    }
-
-    is BlockContent.Feed -> {
-      val items =
-        if (content.ordering == FeedOrdering.REVERSE_CHRONOLOGICAL) content.items.reversed() else content.items
-      items.forEach { item -> TextBlock(theme, item.text, color = colorFor(item.style, theme), small = true) }
-    }
-  }
-}
-
-@Composable
-private fun CommandLine(
-  state: ClientPresentationState,
-  theme: TerminalTheme,
-  onSelection: (String) -> Unit,
-  onCommand: (String) -> Unit,
-  onCancel: (MessageId) -> Unit
-) {
-  Row(
-    Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
-    verticalAlignment = Alignment.CenterVertically,
+  @Composable
+  private fun MenuScreen(
+    theme: TerminalTheme,
+    modifier: Modifier = Modifier,
   ) {
-    Text(":", color = theme.accent, fontSize = 15.sp, fontFamily = mono)
-    Spacer(Modifier.width(8.dp))
-    BasicTextField(
-      value = state.input,
-      onValueChange = state::updateInput,
-      modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        when (event.key) {
-          Key.DirectionUp -> state.previousCommand()
-          Key.DirectionDown -> state.nextCommand()
-          else -> false
-        }
-      }.onKeyEvent { event ->
-        if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-          state.submitCommand(onSelection, onCommand, onCancel)
-          true
-        } else false
-      }.focusable(),
-      singleLine = true,
-      textStyle = TextStyle(color = theme.foreground, fontFamily = mono, fontSize = 14.sp),
-      cursorBrush = SolidColor(theme.accent),
-      decorationBox = { inner ->
-        Box {
-          if (state.input.isEmpty()) Text(
-            "digite um comando ou atalho · M menu · Enter enviar",
+    TerminalTile("MENU", theme, modifier) {
+      SelectionContainer {
+        TextBlock(
+          theme,
+          "[ T ] Alternar tema\n" + "[ V ] Voltar à apresentação\n\n" + "Os comandos do jogo são enviados ao servidor.\n" + "Os atalhos e ações disponíveis são apresentados pelo documento recebido.",
+        )
+      }
+    }
+  }
+
+  @Composable
+  private fun PresentationScreen(
+    document: PresentationDocument,
+    theme: TerminalTheme,
+    modifier: Modifier = Modifier,
+  ) {
+    val mainBlocks = document.blocks.filter {
+      it.region == PresentationRegion.MAIN
+    }
+
+    val sidebarBlocks = document.blocks.filter {
+      it.region == PresentationRegion.SIDEBAR
+    }
+
+    val historyBlocks = document.blocks.filter {
+      it.region == PresentationRegion.HISTORY
+    }
+
+    Row(
+      modifier,
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      PresentationRegionPane(
+        label = "PRINCIPAL",
+        blocks = mainBlocks,
+        theme = theme,
+        modifier = Modifier.weight(2.2f).fillMaxHeight(),
+      )
+
+      Column(
+        Modifier.weight(1f).fillMaxHeight(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        PresentationRegionPane(
+          label = "BARRA LATERAL",
+          blocks = sidebarBlocks,
+          theme = theme,
+          modifier = Modifier.weight(1f),
+        )
+
+        PresentationRegionPane(
+          label = "HISTÓRICO",
+          blocks = historyBlocks,
+          theme = theme,
+          modifier = Modifier.weight(1f),
+        )
+      }
+    }
+  }
+
+  @Composable
+  private fun PresentationRegionPane(
+    label: String,
+    blocks: List<PresentationBlock>,
+    theme: TerminalTheme,
+    modifier: Modifier = Modifier,
+  ) {
+    TerminalTile(label, theme, modifier) {
+      Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+      ) {
+        if (blocks.isEmpty()) {
+          TextBlock(
+            theme,
+            "Sem dados recebidos.",
             color = theme.muted,
-            fontFamily = mono,
-            fontSize = 14.sp
+            small = true,
           )
-          inner()
+        } else {
+          blocks.forEach { block ->
+            block.title?.let {
+              TextBlock(
+                theme,
+                it,
+                color = theme.accent,
+                heading = true,
+              )
+            }
+
+            PresentationBlockContent(
+              content = block.content,
+              theme = theme,
+            )
+          }
         }
+      }
+    }
+  }
+
+  @Composable
+  private fun PresentationBlockContent(
+    content: BlockContent,
+    theme: TerminalTheme,
+  ) {
+    when (content) {
+      is BlockContent.Text -> {
+        TextBlock(
+          theme,
+          content.text,
+          color = colorFor(content.style, theme),
+        )
+      }
+
+      is BlockContent.ItemsList -> {
+        val prefix = if (content.isOrdered) "" else "- "
+
+        content.items.forEachIndexed { index, item ->
+          TextBlock(
+            theme,
+            if (content.isOrdered) {
+              "${index + 1}. $item"
+            } else {
+              "$prefix$item"
+            },
+          )
+        }
+      }
+
+      is BlockContent.Choices -> {
+        content.choices.forEach { choice ->
+          val shortcut = choice.shortcut?.let { "[$it] " } ?: ""
+          val status = if (choice.enabled) "" else " (indisponível)"
+
+          TextBlock(
+            theme,
+            "$shortcut${choice.text}$status",
+            color = if (choice.enabled) {
+              theme.foreground
+            } else {
+              theme.muted
+            },
+          )
+        }
+      }
+
+      is BlockContent.Feed -> {
+        val items = if (content.ordering == FeedOrdering.REVERSE_CHRONOLOGICAL) {
+          content.items.reversed()
+        } else {
+          content.items
+        }
+
+        items.forEach { item ->
+          TextBlock(
+            theme,
+            item.text,
+            color = colorFor(item.style, theme),
+            small = true,
+          )
+        }
+      }
+    }
+  }
+
+  @Composable
+  private fun CommandLine(
+    state: ClientPresentationState,
+    theme: TerminalTheme,
+    onSelection: (String) -> Unit,
+    onCommand: (String) -> Unit,
+    onCancel: (MessageId) -> Unit,
+  ) {
+    Row(
+      Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text(
+        ":",
+        color = theme.accent,
+        fontSize = 15.sp,
+        fontFamily = mono,
+      )
+
+      Spacer(Modifier.width(8.dp))
+
+      BasicTextField(
+        value = state.input,
+        onValueChange = state::updateInput,
+        modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+          if (event.type != KeyEventType.KeyDown) {
+            return@onPreviewKeyEvent false
+          }
+
+          when (event.key) {
+            Key.DirectionUp -> state.previousCommand()
+            Key.DirectionDown -> state.nextCommand()
+            else -> false
+          }
+        }.onKeyEvent { event ->
+          if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+            state.submitCommand(
+              selectionSink = onSelection,
+              commandSink = onCommand,
+              cancelSink = onCancel,
+            )
+
+            true
+          } else {
+            false
+          }
+        }.focusable(),
+        singleLine = true,
+        textStyle = TextStyle(
+          color = theme.foreground,
+          fontFamily = mono,
+          fontSize = 14.sp,
+        ),
+        cursorBrush = SolidColor(theme.accent),
+        decorationBox = { inner ->
+          Box {
+            if (state.input.isEmpty()) {
+              Text(
+                "digite um comando ou atalho · M menu · Enter enviar",
+                color = theme.muted,
+                fontFamily = mono,
+                fontSize = 14.sp,
+              )
+            }
+
+            inner()
+          }
+        },
+      )
+    }
+  }
+
+  @Composable
+  private fun TerminalTile(
+    title: String,
+    theme: TerminalTheme,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+  ) {
+    Column(
+      modifier.border(1.dp, theme.border).padding(horizontal = 10.dp, vertical = 8.dp),
+      verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+      SelectionContainer {
+        Text(
+          "┌─ $title",
+          color = theme.accent,
+          fontFamily = mono,
+          fontSize = 12.sp,
+          fontWeight = FontWeight.Bold,
+        )
+      }
+
+      Box(
+        Modifier.fillMaxWidth().weight(1f, fill = false)
+      ) {
+        content()
+      }
+    }
+  }
+
+  @Composable
+  private fun TextBlock(
+    theme: TerminalTheme,
+    text: String,
+    color: Color = theme.foreground,
+    heading: Boolean = false,
+    small: Boolean = false,
+  ) {
+    Text(
+      text = text,
+      color = color,
+      fontFamily = mono,
+      fontSize = when {
+        small -> 12.sp
+        heading -> 16.sp
+        else -> 14.sp
       },
+      fontWeight = if (heading) {
+        FontWeight.Bold
+      } else {
+        FontWeight.Normal
+      },
+      lineHeight = if (small) 17.sp else 22.sp,
     )
   }
-}
 
-@Composable
-private fun TerminalTile(
-  title: String,
-  theme: TerminalTheme,
-  modifier: Modifier = Modifier,
-  content: @Composable () -> Unit,
-) {
-  Column(
-    modifier.border(1.dp, theme.border).padding(horizontal = 10.dp, vertical = 8.dp),
-    verticalArrangement = Arrangement.spacedBy(7.dp)
-  ) {
-    SelectionContainer {
-      Text("┌─ $title", color = theme.accent, fontFamily = mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-    }
-    Box(Modifier.fillMaxWidth().weight(1f, fill = false)) { content() }
+  private fun colorFor(
+    style: ProtocolTextStyle,
+    theme: TerminalTheme,
+  ): Color = when (style) {
+    ProtocolTextStyle.NORMAL -> theme.foreground
+    ProtocolTextStyle.HEADER, ProtocolTextStyle.HIGHLIGHT -> theme.accent
+    ProtocolTextStyle.SUBHEADER -> theme.foreground
+    ProtocolTextStyle.MUTED -> theme.muted
+    ProtocolTextStyle.WARNING -> Color(0xFFFFC857)
+    ProtocolTextStyle.ERROR -> Color(0xFFE96B6B)
   }
 }
 
-@Composable
-private fun TextBlock(
-  theme: TerminalTheme,
-  text: String,
-  color: Color = theme.foreground,
-  heading: Boolean = false,
-  small: Boolean = false,
-) {
-  Text(
-    text = text,
-    color = color,
-    fontFamily = mono,
-    fontSize = when {
-      small -> 12.sp; heading -> 16.sp; else -> 14.sp
-    },
-    fontWeight = if (heading) FontWeight.Bold else FontWeight.Normal,
-    lineHeight = if (small) 17.sp else 22.sp,
-  )
-}
+//entrypoint
 
-private fun colorFor(style: ProtocolTextStyle, theme: TerminalTheme): Color = when (style) {
-  ProtocolTextStyle.NORMAL -> theme.foreground
-  ProtocolTextStyle.HEADER, ProtocolTextStyle.HIGHLIGHT -> theme.accent
-  ProtocolTextStyle.SUBHEADER -> theme.foreground
-  ProtocolTextStyle.MUTED -> theme.muted
-  ProtocolTextStyle.WARNING -> Color(0xFFFFC857)
-  ProtocolTextStyle.ERROR -> Color(0xFFE96B6B)
+fun main() = application {
+  Window(
+    onCloseRequest = ::exitApplication,
+    title = "FL-RPG · terminal",
+  ) {
+    val state = remember {
+      ClientPresentationState()
+    }
+
+    val connection = remember(state) {
+      ClientConnection(
+        onServerMessage = state::receive,
+        onConnectionMessage = { message ->
+          state.connectionMessage = message
+        },
+        onOperationStarted = { messageId ->
+          state.activeOperationMessageId = messageId
+        },
+      )
+    }
+
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(connection) {
+      connection.connect(scope)
+    }
+
+    DisposableEffect(connection) {
+      onDispose {
+        connection.close()
+      }
+    }
+
+    ClientUi.TerminalApp(
+      state = state,
+      onSelection = connection::sendSelection,
+      onCommand = { text ->
+        val trimmed = text.trim()
+
+        if (trimmed.isNotEmpty()) {
+          connection.sendTextCommand(trimmed)
+        }
+      },
+      onCancel = connection::sendCancel,
+    )
+  }
 }
