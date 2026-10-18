@@ -1302,6 +1302,7 @@ private object ClientUi {
       } else {
         PresentationScreen(
           document = state.document,
+          workspace = state.workspace,
           theme = theme,
           modifier = Modifier.weight(1f).fillMaxWidth(),
         )
@@ -1350,95 +1351,56 @@ private object ClientUi {
   @Composable
   private fun PresentationScreen(
     document: PresentationDocument,
+    workspace: WorkspaceState,
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
   ) {
-    val mainBlocks = document.blocks.filter {
-      it.region == PresentationRegion.MAIN
-    }
+    val maximizedId = workspace.maximizedId
+    val compact = workspace.isCompactMode()
 
-    val sidebarBlocks = document.blocks.filter {
-      it.region == PresentationRegion.SIDEBAR
-    }
-
-    val historyBlocks = document.blocks.filter {
-      it.region == PresentationRegion.HISTORY
-    }
-
-    Row(
-      modifier,
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-      PresentationRegionPane(
-        label = "PRINCIPAL",
-        blocks = mainBlocks,
-        theme = theme,
-        modifier = Modifier.weight(2.2f).fillMaxHeight(),
-      )
-
-      Column(
-        Modifier.weight(1f).fillMaxHeight(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-      ) {
-        PresentationRegionPane(
-          label = "BARRA LATERAL",
-          blocks = sidebarBlocks,
+    when {
+      maximizedId != null -> {
+        val instance = workspace.instance(maximizedId) ?: return
+        TerminalTile(
+          id = instance.id,
+          title = instance.title,
+          selected = true,
           theme = theme,
-          modifier = Modifier.weight(1f),
-        )
-
-        PresentationRegionPane(
-          label = "HISTÓRICO",
-          blocks = historyBlocks,
-          theme = theme,
-          modifier = Modifier.weight(1f),
-        )
-      }
-    }
-  }
-
-  @Composable
-  private fun PresentationRegionPane(
-    label: String,
-    blocks: List<PresentationBlock>,
-    theme: TerminalTheme,
-    modifier: Modifier = Modifier,
-  ) {
-    TerminalTile(
-      id = TileId(0),
-      title = label,
-      selected = false,
-      theme = theme,
-      modifier = modifier,
-    ) {
-      Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-      ) {
-        if (blocks.isEmpty()) {
-          TextBlock(
-            theme,
-            "Sem dados recebidos.",
-            color = theme.muted,
-            small = true,
+          modifier = modifier,
+        ) {
+          RenderViewContent(
+            viewType = instance.viewType,
+            document = document,
+            theme = theme,
           )
-        } else {
-          blocks.forEach { block ->
-            block.title?.let {
-              TextBlock(
-                theme,
-                it,
-                color = theme.accent,
-                heading = true,
-              )
-            }
-
-            PresentationBlockContent(
-              content = block.content,
-              theme = theme,
-            )
-          }
         }
+      }
+
+      compact -> {
+        val instance = workspace.instance(workspace.selectedId) ?: return
+        TerminalTile(
+          id = instance.id,
+          title = instance.title,
+          selected = true,
+          theme = theme,
+          modifier = modifier,
+        ) {
+          RenderViewContent(
+            viewType = instance.viewType,
+            document = document,
+            theme = theme,
+          )
+        }
+      }
+
+      else -> {
+        WorkspaceLayout(
+          node = workspace.layoutRoot,
+          workspace = workspace,
+          document = document,
+          theme = theme,
+          modifier = modifier,
+        )
       }
     }
   }
