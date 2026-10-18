@@ -1886,60 +1886,60 @@ private object ClientUi {
         value = state.input,
         onValueChange = state::updateInput,
         modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onPreviewKeyEvent { event ->
-            if (event.type != KeyEventType.KeyDown) {
-              return@onPreviewKeyEvent false
-            }
+          if (event.type != KeyEventType.KeyDown) {
+            return@onPreviewKeyEvent false
+          }
 
-            when {
-              event.isCtrlPressed && event.key == Key.Tab -> {
-                if (event.isShiftPressed) {
-                  state.selectPreviousTile()
-                } else {
-                  state.selectNextTile()
-                }
-                true
+          when {
+            event.isCtrlPressed && event.key == Key.Tab -> {
+              if (event.isShiftPressed) {
+                state.selectPreviousTile()
+              } else {
+                state.selectNextTile()
               }
-
-              event.isAltPressed -> {
-                val number = when (event.key) {
-                  Key.One -> 1
-                  Key.Two -> 2
-                  Key.Three -> 3
-                  Key.Four -> 4
-                  Key.Five -> 5
-                  Key.Six -> 6
-                  Key.Seven -> 7
-                  Key.Eight -> 8
-                  Key.Nine -> 9
-                  else -> null
-                }
-
-                if (number != null) {
-                  state.selectTileByNumber(number)
-                  true
-                } else {
-                  false
-                }
-              }
-
-              event.key == Key.DirectionUp -> state.previousCommand()
-              event.key == Key.DirectionDown -> state.nextCommand()
-
-              else -> false
-            }
-          }.onKeyEvent { event ->
-            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-              state.submitCommand(
-                selectionSink = onSelection,
-                commandSink = onCommand,
-                cancelSink = onCancel,
-              )
-              focusRequester.requestFocus()
               true
-            } else {
-              false
             }
-          }.focusable(),
+
+            event.isAltPressed -> {
+              val number = when (event.key) {
+                Key.One -> 1
+                Key.Two -> 2
+                Key.Three -> 3
+                Key.Four -> 4
+                Key.Five -> 5
+                Key.Six -> 6
+                Key.Seven -> 7
+                Key.Eight -> 8
+                Key.Nine -> 9
+                else -> null
+              }
+
+              if (number != null) {
+                state.selectTileByNumber(number)
+                true
+              } else {
+                false
+              }
+            }
+
+            event.key == Key.DirectionUp -> state.previousCommand()
+            event.key == Key.DirectionDown -> state.nextCommand()
+
+            else -> false
+          }
+        }.onKeyEvent { event ->
+          if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+            state.submitCommand(
+              selectionSink = onSelection,
+              commandSink = onCommand,
+              cancelSink = onCancel,
+            )
+            focusRequester.requestFocus()
+            true
+          } else {
+            false
+          }
+        }.focusable(),
         singleLine = true,
         textStyle = TextStyle(
           color = theme.foreground,
