@@ -323,6 +323,18 @@ class WorkspaceState {
     return true
   }
 
+  fun select(id: TileId): Boolean {
+    val current = instances[id] ?: return false
+    if (current.lifecycle != TileLifecycle.ACTIVE) return false
+    if (!layoutRoot.contains(id)) return false
+
+    if (selectedId != id) {
+      clearMaximization()
+    }
+    selectedId = id
+    return true
+  }
+
   private fun insertIntoLargestRegion(newId: TileId) {
     val geometries = computeLeafGeometries(layoutRoot, 0f, 0f, logicalWidthDp, logicalHeightDp)
     if (geometries.isEmpty()) {
