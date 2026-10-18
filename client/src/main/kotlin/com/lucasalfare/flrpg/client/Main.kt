@@ -1,5 +1,8 @@
 package com.lucasalfare.flrpg.client
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
@@ -20,9 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateContentSize
 import com.lucasalfare.flrpg.communicationprotocol.*
 import com.lucasalfare.flrpg.communicationprotocol.Sequence.Companion.ZERO
 import io.ktor.client.*
@@ -1991,9 +1991,7 @@ private object ClientUi {
     )
 
     Column(
-      modifier
-        .animateContentSize(animationSpec = tween(durationMillis = 180))
-        .border(1.dp, borderColor)
+      modifier.animateContentSize(animationSpec = tween(durationMillis = 180)).border(1.dp, borderColor)
         .padding(horizontal = 10.dp, vertical = 8.dp),
       verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
