@@ -302,6 +302,56 @@ sealed class WorkspaceLayoutNode {
   }
 }
 
+data class ViewDefinition(
+  val type: TileViewType,
+  val textualId: String,
+  val defaultTitle: String,
+  val singleInstance: Boolean,
+)
+
+object TileViewRegistry {
+  private val byTextualId = mapOf(
+    "world" to ViewDefinition(
+      type = TileViewType.WORLD,
+      textualId = "world",
+      defaultTitle = "World",
+      singleInstance = true,
+    ),
+    "help" to ViewDefinition(
+      type = TileViewType.HELP,
+      textualId = "help",
+      defaultTitle = "Help",
+      singleInstance = true,
+    ),
+    "workspace" to ViewDefinition(
+      type = TileViewType.WORKSPACE,
+      textualId = "workspace",
+      defaultTitle = "Workspace",
+      singleInstance = true,
+    ),
+    "history" to ViewDefinition(
+      type = TileViewType.HISTORY,
+      textualId = "history",
+      defaultTitle = "History",
+      singleInstance = true,
+    ),
+  )
+
+  private val byType = byTextualId.values.associateBy { it.type }
+
+  fun isRegistered(textualId: String): Boolean = byTextualId.containsKey(textualId.lowercase())
+
+  fun isRegistered(type: TileViewType): Boolean = byType.containsKey(type)
+
+  fun definition(textualId: String): ViewDefinition? = byTextualId[textualId.lowercase()]
+
+  fun definition(type: TileViewType): ViewDefinition? = byType[type]
+
+  fun defaultTitle(type: TileViewType): String? = byType[type]?.defaultTitle
+
+  fun allDefinitions(): Collection<ViewDefinition> = byTextualId.values
+}
+
 //state
 
 private enum class ClientScreen {
