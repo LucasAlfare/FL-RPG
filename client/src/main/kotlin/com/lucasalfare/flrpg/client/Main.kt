@@ -1371,6 +1371,7 @@ private object ClientUi {
           RenderViewContent(
             viewType = instance.viewType,
             document = document,
+            workspace = workspace,
             theme = theme,
           )
         }
@@ -1388,6 +1389,7 @@ private object ClientUi {
           RenderViewContent(
             viewType = instance.viewType,
             document = document,
+            workspace = workspace,
             theme = theme,
           )
         }
@@ -1474,6 +1476,7 @@ private object ClientUi {
   private fun RenderViewContent(
     viewType: TileViewType,
     document: PresentationDocument,
+    workspace: WorkspaceState,
     theme: TerminalTheme,
   ) {
     when (viewType) {
@@ -1596,6 +1599,62 @@ private object ClientUi {
         }
       }
 
+      TileViewType.WORKSPACE -> {
+        Column(
+          Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          TextBlock(theme, "Workspace", color = theme.accent, heading = true)
+
+          val selected = workspace.selectedId
+          val maximized = workspace.maximizedId
+          val active = workspace.activeInstances()
+          val minimized = workspace.minimizedInstances()
+
+          TextBlock(
+            theme,
+            "Selected: ${selected.value}" + if (maximized != null) " · Maximized: ${maximized.value}" else "",
+            color = theme.muted,
+            small = true,
+          )
+
+          TextBlock(theme, "Active tiles", color = theme.accent, heading = true)
+
+          if (active.isEmpty()) {
+            TextBlock(theme, "  (none)", color = theme.muted, small = true)
+          } else {
+            active.forEach { tile ->
+              val markers = buildString {
+                if (tile.id == selected) append(" [selected]")
+                if (tile.id == maximized) append(" [maximized]")
+                if (tile.id == workspace.mainTileId) append(" [main]")
+              }
+              val typeName = TileViewRegistry.definition(tile.viewType)?.textualId ?: tile.viewType.name.lowercase()
+              TextBlock(
+                theme,
+                "  #${tile.id.value}  $typeName  \"${tile.title}\"  ${tile.lifecycle.name.lowercase()}$markers",
+                small = true,
+              )
+            }
+          }
+
+          TextBlock(theme, "Minimized tiles", color = theme.accent, heading = true)
+
+          if (minimized.isEmpty()) {
+            TextBlock(theme, "  (none)", color = theme.muted, small = true)
+          } else {
+            minimized.forEach { tile ->
+              val typeName = TileViewRegistry.definition(tile.viewType)?.textualId ?: tile.viewType.name.lowercase()
+              TextBlock(
+                theme,
+                "  #${tile.id.value}  $typeName  \"${tile.title}\"  ${tile.lifecycle.name.lowercase()}",
+                small = true,
+              )
+            }
+          }
+        }
+      }
+
       else -> {
         val name = TileViewRegistry.definition(viewType)?.textualId ?: viewType.name.lowercase()
         TextBlock(
@@ -1629,6 +1688,7 @@ private object ClientUi {
           RenderViewContent(
             viewType = instance.viewType,
             document = document,
+            workspace = workspace,
             theme = theme,
           )
         }
