@@ -1394,57 +1394,62 @@ private object ClientUi {
     activeOperationMessageId: MessageId?,
     modifier: Modifier = Modifier,
   ) {
-    val maximizedId = workspace.maximizedId
-    val compact = workspace.isCompactMode()
+    BoxWithConstraints(modifier = modifier) {
+      workspace.logicalWidthDp = maxWidth.value
+      workspace.logicalHeightDp = maxHeight.value
 
-    when {
-      maximizedId != null -> {
-        val instance = workspace.instance(maximizedId) ?: return
-        TerminalTile(
-          id = instance.id,
-          title = instance.title,
-          selected = true,
-          theme = theme,
-          modifier = modifier,
-        ) {
-          RenderViewContent(
-            viewType = instance.viewType,
-            document = document,
+      val maximizedId = workspace.maximizedId
+      val compact = workspace.isCompactMode()
+
+      when {
+        maximizedId != null -> {
+          val instance = workspace.instance(maximizedId) ?: return@BoxWithConstraints
+          TerminalTile(
+            id = instance.id,
+            title = instance.title,
+            selected = true,
+            theme = theme,
+            modifier = Modifier.fillMaxSize(),
+          ) {
+            RenderViewContent(
+              viewType = instance.viewType,
+              document = document,
+              workspace = workspace,
+              theme = theme,
+              activeOperationMessageId = activeOperationMessageId,
+            )
+          }
+        }
+
+        compact -> {
+          val instance = workspace.instance(workspace.selectedId) ?: return@BoxWithConstraints
+          TerminalTile(
+            id = instance.id,
+            title = instance.title,
+            selected = true,
+            theme = theme,
+            modifier = Modifier.fillMaxSize(),
+          ) {
+            RenderViewContent(
+              viewType = instance.viewType,
+              document = document,
+              workspace = workspace,
+              theme = theme,
+              activeOperationMessageId = activeOperationMessageId,
+            )
+          }
+        }
+
+        else -> {
+          WorkspaceLayout(
+            node = workspace.layoutRoot,
             workspace = workspace,
+            document = document,
             theme = theme,
             activeOperationMessageId = activeOperationMessageId,
+            modifier = Modifier.fillMaxSize(),
           )
         }
-      }
-
-      compact -> {
-        val instance = workspace.instance(workspace.selectedId) ?: return
-        TerminalTile(
-          id = instance.id,
-          title = instance.title,
-          selected = true,
-          theme = theme,
-          modifier = modifier,
-        ) {
-          RenderViewContent(
-            viewType = instance.viewType,
-            document = document,
-            workspace = workspace,
-            theme = theme,
-            activeOperationMessageId = activeOperationMessageId,
-          )
-        }
-      }
-
-      else -> {
-        WorkspaceLayout(
-          node = workspace.layoutRoot,
-          workspace = workspace,
-          document = document,
-          theme = theme,
-          activeOperationMessageId = activeOperationMessageId,
-          modifier = modifier,
-        )
       }
     }
   }
