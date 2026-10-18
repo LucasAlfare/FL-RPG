@@ -292,6 +292,28 @@ class WorkspaceState {
     return true
   }
 
+  fun minimize(id: TileId): Boolean {
+    if (id == mainTileId) return false
+
+    val current = instances[id] ?: return false
+    if (current.lifecycle != TileLifecycle.ACTIVE) return false
+    if (!layoutRoot.contains(id)) return false
+
+    val newRoot = layoutRoot.removeLeaf(id) ?: return false
+
+    clearMaximization()
+    layoutRoot = newRoot
+    instances[id] = current.copy(lifecycle = TileLifecycle.MINIMIZED)
+
+    if (selectedId == id) {
+      selectedId = newRoot.visualLeaves().first()
+    }
+
+    return true
+  }
+
+  fun restore(id: TileId): Boolean = restoreMinimized(id)
+
   private fun restoreMinimized(id: TileId): Boolean {
     val current = instances[id] ?: return false
     if (current.lifecycle != TileLifecycle.MINIMIZED) return false
@@ -307,20 +329,29 @@ class WorkspaceState {
     if (id == mainTileId) return false
 
     val current = instances[id] ?: return false
-    if (current.lifecycle != TileLifecycle.ACTIVE) return false
-    if (!layoutRoot.contains(id)) return false
 
-    val newRoot = layoutRoot.removeLeaf(id) ?: return false
+    return when (current.lifecycle) {
+      TileLifecycle.ACTIVE -> {
+        if (!layoutRoot.contains(id)) return false
 
-    clearMaximization()
-    layoutRoot = newRoot
-    instances.remove(id)
+        val newRoot = layoutRoot.removeLeaf(id) ?: return false
 
-    if (selectedId == id) {
-      selectedId = newRoot.visualLeaves().first()
+        clearMaximization()
+        layoutRoot = newRoot
+        instances.remove(id)
+
+        if (selectedId == id) {
+          selectedId = newRoot.visualLeaves().first()
+        }
+
+        true
+      }
+
+      TileLifecycle.MINIMIZED -> {
+        instances.remove(id)
+        true
+      }
     }
-
-    return true
   }
 
   fun select(id: TileId): Boolean {
