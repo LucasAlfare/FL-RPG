@@ -209,7 +209,7 @@ class ClientConnection(
 value class TileId(val value: Int)
 
 enum class TileViewType {
-  WORLD, HELP, WORKSPACE, HISTORY,
+  WORLD, HELP, WORKSPACE, HISTORY, ACTIVITY,
 }
 
 enum class TileLifecycle {
@@ -602,6 +602,12 @@ object TileViewRegistry {
       type = TileViewType.HISTORY,
       textualId = "history",
       defaultTitle = "History",
+      singleInstance = true,
+    ),
+    "activity" to ViewDefinition(
+      type = TileViewType.ACTIVITY,
+      textualId = "activity",
+      defaultTitle = "Activity",
       singleInstance = true,
     ),
   )
@@ -1304,6 +1310,7 @@ private object ClientUi {
           document = state.document,
           workspace = state.workspace,
           theme = theme,
+          activeOperationMessageId = state.activeOperationMessageId,
           modifier = Modifier.weight(1f).fillMaxWidth(),
         )
       }
@@ -1353,6 +1360,7 @@ private object ClientUi {
     document: PresentationDocument,
     workspace: WorkspaceState,
     theme: TerminalTheme,
+    activeOperationMessageId: MessageId?,
     modifier: Modifier = Modifier,
   ) {
     val maximizedId = workspace.maximizedId
@@ -1373,6 +1381,7 @@ private object ClientUi {
             document = document,
             workspace = workspace,
             theme = theme,
+            activeOperationMessageId = activeOperationMessageId,
           )
         }
       }
@@ -1391,6 +1400,7 @@ private object ClientUi {
             document = document,
             workspace = workspace,
             theme = theme,
+            activeOperationMessageId = activeOperationMessageId,
           )
         }
       }
@@ -1401,6 +1411,7 @@ private object ClientUi {
           workspace = workspace,
           document = document,
           theme = theme,
+          activeOperationMessageId = activeOperationMessageId,
           modifier = modifier,
         )
       }
@@ -1478,6 +1489,7 @@ private object ClientUi {
     document: PresentationDocument,
     workspace: WorkspaceState,
     theme: TerminalTheme,
+    activeOperationMessageId: MessageId?,
   ) {
     when (viewType) {
       TileViewType.WORLD -> {
@@ -1537,7 +1549,7 @@ private object ClientUi {
           TextBlock(theme, "ui open <view>")
           TextBlock(
             theme,
-            "  Open a registered view. Single-instance views (world, help, workspace, history) " + "select the existing instance if active, or restore it if minimized.",
+            "  Open a registered view. Single-instance views (world, help, workspace, history, activity) " + "select the existing instance if active, or restore it if minimized.",
             small = true,
           )
 
@@ -1575,6 +1587,27 @@ private object ClientUi {
           TextBlock(
             theme,
             "  Swap the positions of two active tiles without changing their identities or content.",
+            small = true,
+          )
+
+          TextBlock(theme, "Views", color = theme.accent, heading = true)
+
+          TextBlock(theme, "world")
+          TextBlock(theme, "  Main presentation document (excludes client history).", small = true)
+
+          TextBlock(theme, "help")
+          TextBlock(theme, "  This help content (available offline).", small = true)
+
+          TextBlock(theme, "workspace")
+          TextBlock(theme, "  Lists active and minimized tiles with selection and maximization state.", small = true)
+
+          TextBlock(theme, "history")
+          TextBlock(theme, "  Local recent events feed maintained by the client.", small = true)
+
+          TextBlock(theme, "activity")
+          TextBlock(
+            theme,
+            "  Shows the currently active operation message id when one exists. " + "No progress percentages or estimated states are invented.",
             small = true,
           )
 
@@ -1655,14 +1688,55 @@ private object ClientUi {
         }
       }
 
-      else -> {
-        val name = TileViewRegistry.definition(viewType)?.textualId ?: viewType.name.lowercase()
-        TextBlock(
-          theme,
-          "No content renderer for view '$name'.",
-          color = theme.muted,
-          small = true,
-        )
+      TileViewType.HISTORY -> {
+        Column(
+          Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          TextBlock(theme, "History", color = theme.accent, heading = true)
+
+          val historyBlocks = document.blocks.filter { it.region == PresentationRegion.HISTORY }
+
+          if (historyBlocks.isEmpty()) {
+            TextBlock(
+              theme,
+              "No recent events.",
+              color = theme.muted,
+              small = true,
+            )
+          } else {
+            historyBlocks.forEach { block ->
+              PresentationBlockContent(
+                content = block.content,
+                theme = theme,
+              )
+            }
+          }
+        }
+      }
+
+      TileViewType.ACTIVITY -> {
+        Column(
+          Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          TextBlock(theme, "Activity", color = theme.accent, heading = true)
+
+          val activeId = activeOperationMessageId
+          if (activeId != null) {
+            TextBlock(
+              theme,
+              "Active operation message id: ${activeId.value}",
+            )
+          } else {
+            TextBlock(
+              theme,
+              "No active operation.",
+              color = theme.muted,
+              small = true,
+            )
+          }
+        }
       }
     }
   }
@@ -1673,6 +1747,7 @@ private object ClientUi {
     workspace: WorkspaceState,
     document: PresentationDocument,
     theme: TerminalTheme,
+    activeOperationMessageId: MessageId?,
     modifier: Modifier = Modifier,
   ) {
     when (node) {
@@ -1690,6 +1765,7 @@ private object ClientUi {
             document = document,
             workspace = workspace,
             theme = theme,
+            activeOperationMessageId = activeOperationMessageId,
           )
         }
       }
@@ -1706,6 +1782,7 @@ private object ClientUi {
                 workspace = workspace,
                 document = document,
                 theme = theme,
+                activeOperationMessageId = activeOperationMessageId,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
               )
               WorkspaceLayout(
@@ -1713,6 +1790,7 @@ private object ClientUi {
                 workspace = workspace,
                 document = document,
                 theme = theme,
+                activeOperationMessageId = activeOperationMessageId,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
               )
             }
@@ -1728,6 +1806,7 @@ private object ClientUi {
                 workspace = workspace,
                 document = document,
                 theme = theme,
+                activeOperationMessageId = activeOperationMessageId,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
               )
               WorkspaceLayout(
@@ -1735,6 +1814,7 @@ private object ClientUi {
                 workspace = workspace,
                 document = document,
                 theme = theme,
+                activeOperationMessageId = activeOperationMessageId,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
               )
             }
