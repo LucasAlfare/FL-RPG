@@ -20,6 +20,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateContentSize
 import com.lucasalfare.flrpg.communicationprotocol.*
 import com.lucasalfare.flrpg.communicationprotocol.Sequence.Companion.ZERO
 import io.ktor.client.*
@@ -1394,7 +1397,9 @@ private object ClientUi {
     activeOperationMessageId: MessageId?,
     modifier: Modifier = Modifier,
   ) {
-    BoxWithConstraints(modifier = modifier) {
+    BoxWithConstraints(
+      modifier = modifier.animateContentSize(animationSpec = tween(durationMillis = 180)),
+    ) {
       workspace.logicalWidthDp = maxWidth.value
       workspace.logicalHeightDp = maxHeight.value
 
@@ -1810,7 +1815,7 @@ private object ClientUi {
         when (node.orientation) {
           SplitOrientation.ROW -> {
             Row(
-              modifier = modifier,
+              modifier = modifier.animateContentSize(animationSpec = tween(durationMillis = 180)),
               horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
               WorkspaceLayout(
@@ -1834,7 +1839,7 @@ private object ClientUi {
 
           SplitOrientation.COLUMN -> {
             Column(
-              modifier = modifier,
+              modifier = modifier.animateContentSize(animationSpec = tween(durationMillis = 180)),
               verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
               WorkspaceLayout(
@@ -1979,8 +1984,17 @@ private object ClientUi {
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
   ) {
+    val borderColor by animateColorAsState(
+      targetValue = if (selected) theme.accent else theme.border,
+      animationSpec = tween(durationMillis = 150),
+      label = "tileBorder",
+    )
+
     Column(
-      modifier.border(1.dp, theme.border).padding(horizontal = 10.dp, vertical = 8.dp),
+      modifier
+        .animateContentSize(animationSpec = tween(durationMillis = 180))
+        .border(1.dp, borderColor)
+        .padding(horizontal = 10.dp, vertical = 8.dp),
       verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
       SelectionContainer {
