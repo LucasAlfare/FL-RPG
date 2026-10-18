@@ -883,10 +883,17 @@ class ClientPresentationState {
 
   val workspace = WorkspaceState()
 
+  var workspaceEpoch by mutableStateOf(0)
+    private set
+
   private val commandHistory = mutableStateListOf<String>()
 
   private var historyIndex by mutableStateOf<Int?>(null)
   private var inputBeforeHistory = ""
+
+  private fun touchWorkspace() {
+    workspaceEpoch += 1
+  }
 
   fun receive(message: ServerMessage) {
     when (message) {
@@ -1091,13 +1098,23 @@ class ClientPresentationState {
     return true
   }
 
-  fun selectNextTile(): Boolean = workspace.selectNextInVisualOrder()
+  fun selectNextTile(): Boolean {
+    val changed = workspace.selectNextInVisualOrder()
+    if (changed) touchWorkspace()
+    return changed
+  }
 
-  fun selectPreviousTile(): Boolean = workspace.selectPreviousInVisualOrder()
+  fun selectPreviousTile(): Boolean {
+    val changed = workspace.selectPreviousInVisualOrder()
+    if (changed) touchWorkspace()
+    return changed
+  }
 
   fun selectTileByNumber(number: Int): Boolean {
     if (number !in 1..9) return false
-    return workspace.select(TileId(number))
+    val changed = workspace.select(TileId(number))
+    if (changed) touchWorkspace()
+    return changed
   }
 
   private fun findActiveChoice(input: String): Choice? {
@@ -1153,7 +1170,7 @@ class ClientPresentationState {
   }
 
   private fun dispatchLocalUiCommand(command: LocalUiCommand): String {
-    return when (command) {
+    val message = when (command) {
       LocalUiCommand.Help -> {
         if (workspace.open("help")) {
           "UI · help opened"
@@ -1237,6 +1254,8 @@ class ClientPresentationState {
         }
       }
     }
+    touchWorkspace()
+    return message
   }
 
   private fun rememberCommand(command: String) {
@@ -1343,6 +1362,7 @@ private object ClientUi {
         PresentationScreen(
           document = state.document,
           workspace = state.workspace,
+          workspaceEpoch = state.workspaceEpoch,
           theme = theme,
           activeOperationMessageId = state.activeOperationMessageId,
           modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -1393,6 +1413,7 @@ private object ClientUi {
   private fun PresentationScreen(
     document: PresentationDocument,
     workspace: WorkspaceState,
+    workspaceEpoch: Int,
     theme: TerminalTheme,
     activeOperationMessageId: MessageId?,
     modifier: Modifier = Modifier,
@@ -1400,6 +1421,8 @@ private object ClientUi {
     BoxWithConstraints(
       modifier = modifier.animateContentSize(animationSpec = tween(durationMillis = 180)),
     ) {
+      @Suppress("UNUSED_EXPRESSION") workspaceEpoch
+
       workspace.logicalWidthDp = maxWidth.value
       workspace.logicalHeightDp = maxHeight.value
 
