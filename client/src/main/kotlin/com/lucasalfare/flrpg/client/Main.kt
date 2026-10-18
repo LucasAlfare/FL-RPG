@@ -263,6 +263,45 @@ class WorkspaceState {
   }
 }
 
+enum class SplitOrientation {
+  ROW, COLUMN,
+}
+
+sealed class WorkspaceLayoutNode {
+  data class Leaf(val tileId: TileId) : WorkspaceLayoutNode()
+
+  data class Branch(
+    val orientation: SplitOrientation,
+    val first: WorkspaceLayoutNode,
+    val second: WorkspaceLayoutNode,
+  ) : WorkspaceLayoutNode()
+
+  fun leafCount(): Int = when (this) {
+    is Leaf -> 1
+    is Branch -> first.leafCount() + second.leafCount()
+  }
+
+  fun visualLeaves(): List<TileId> = when (this) {
+    is Leaf -> listOf(tileId)
+    is Branch -> first.visualLeaves() + second.visualLeaves()
+  }
+
+  fun findLeaf(id: TileId): Leaf? = when (this) {
+    is Leaf -> if (tileId == id) this else null
+    is Branch -> first.findLeaf(id) ?: second.findLeaf(id)
+  }
+
+  fun contains(id: TileId): Boolean = findLeaf(id) != null
+
+  fun hasDuplicateIds(): Boolean {
+    val seen = mutableSetOf<TileId>()
+    for (id in visualLeaves()) {
+      if (!seen.add(id)) return true
+    }
+    return false
+  }
+}
+
 //state
 
 private enum class ClientScreen {
