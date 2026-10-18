@@ -1511,6 +1511,91 @@ private object ClientUi {
         }
       }
 
+      TileViewType.HELP -> {
+        Column(
+          Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          TextBlock(theme, "Workspace help", color = theme.accent, heading = true)
+
+          TextBlock(
+            theme,
+            "Local UI commands start with the token 'ui' (case-insensitive). " + "They never reach the game server. Any other input is treated as a game command " + "or menu shortcut and may be sent to the server.",
+          )
+
+          TextBlock(theme, "Commands", color = theme.accent, heading = true)
+
+          TextBlock(theme, "ui help")
+          TextBlock(theme, "  Open or select the help view (this tile).", small = true)
+
+          TextBlock(theme, "ui tiles")
+          TextBlock(theme, "  Open or select the workspace management view.", small = true)
+
+          TextBlock(theme, "ui open <view>")
+          TextBlock(
+            theme,
+            "  Open a registered view. Single-instance views (world, help, workspace, history) " + "select the existing instance if active, or restore it if minimized.",
+            small = true,
+          )
+
+          TextBlock(theme, "ui focus <id>")
+          TextBlock(theme, "  Select the active tile with the given numeric id.", small = true)
+
+          TextBlock(theme, "ui close [id]")
+          TextBlock(
+            theme,
+            "  Close the given active tile, or the selected tile if id is omitted. " + "The main world tile cannot be closed. Closing a minimized tile removes it permanently.",
+            small = true,
+          )
+
+          TextBlock(theme, "ui minimize [id]")
+          TextBlock(
+            theme,
+            "  Remove the given active tile (or the selected one) from the layout and keep it minimized. " + "The main world tile cannot be minimized.",
+            small = true,
+          )
+
+          TextBlock(theme, "ui restore <id>")
+          TextBlock(theme, "  Restore a minimized tile into the layout and select it.", small = true)
+
+          TextBlock(theme, "ui maximize [id]")
+          TextBlock(
+            theme,
+            "  Maximize the given active tile (or the selected one) to fill the workspace. " + "The original layout tree is preserved.",
+            small = true,
+          )
+
+          TextBlock(theme, "ui unmaximize")
+          TextBlock(theme, "  Restore the layout after maximization.", small = true)
+
+          TextBlock(theme, "ui swap <id> <other-id>")
+          TextBlock(
+            theme,
+            "  Swap the positions of two active tiles without changing their identities or content.",
+            small = true,
+          )
+
+          TextBlock(theme, "Selection and layout rules", color = theme.accent, heading = true)
+
+          TextBlock(
+            theme,
+            "There is always one selected active tile. Closing or minimizing the selected tile " + "selects the first remaining active tile in visual order. Maximization is cleared " + "before any structural change or selection change to another tile.",
+          )
+
+          TextBlock(
+            theme,
+            "Compact mode activates when any active tile would be smaller than 280 dp wide or " + "180 dp tall. In that case only the selected tile is shown; the tree and all " + "instances remain intact and the full layout returns when space allows.",
+          )
+
+          TextBlock(
+            theme,
+            "This help view is available offline and is a single-instance view.",
+            color = theme.muted,
+            small = true,
+          )
+        }
+      }
+
       else -> {
         val name = TileViewRegistry.definition(viewType)?.textualId ?: viewType.name.lowercase()
         TextBlock(
