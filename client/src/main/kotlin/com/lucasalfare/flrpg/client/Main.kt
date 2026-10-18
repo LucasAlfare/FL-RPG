@@ -8,6 +8,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.*
@@ -369,6 +371,26 @@ class WorkspaceState {
     }
     selectedId = id
     return true
+  }
+
+  fun selectNextInVisualOrder(): Boolean {
+    val leaves = layoutRoot.visualLeaves()
+    if (leaves.size <= 1) return false
+
+    val index = leaves.indexOf(selectedId)
+    if (index < 0) return false
+
+    return select(leaves[(index + 1) % leaves.size])
+  }
+
+  fun selectPreviousInVisualOrder(): Boolean {
+    val leaves = layoutRoot.visualLeaves()
+    if (leaves.size <= 1) return false
+
+    val index = leaves.indexOf(selectedId)
+    if (index < 0) return false
+
+    return select(leaves[(index - 1 + leaves.size) % leaves.size])
   }
 
   fun maximize(id: TileId): Boolean {
@@ -1064,6 +1086,15 @@ class ClientPresentationState {
     }
 
     return true
+  }
+
+  fun selectNextTile(): Boolean = workspace.selectNextInVisualOrder()
+
+  fun selectPreviousTile(): Boolean = workspace.selectPreviousInVisualOrder()
+
+  fun selectTileByNumber(number: Int): Boolean {
+    if (number !in 1..9) return false
+    return workspace.select(TileId(number))
   }
 
   private fun findActiveChoice(input: String): Choice? {
@@ -1832,6 +1863,12 @@ private object ClientUi {
     onCommand: (String) -> Unit,
     onCancel: (MessageId) -> Unit,
   ) {
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+      focusRequester.requestFocus()
+    }
+
     Row(
       Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
       verticalAlignment = Alignment.CenterVertically,
@@ -1848,29 +1885,61 @@ private object ClientUi {
       BasicTextField(
         value = state.input,
         onValueChange = state::updateInput,
-        modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
-          if (event.type != KeyEventType.KeyDown) {
-            return@onPreviewKeyEvent false
-          }
+        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onPreviewKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) {
+              return@onPreviewKeyEvent false
+            }
 
-          when (event.key) {
-            Key.DirectionUp -> state.previousCommand()
-            Key.DirectionDown -> state.nextCommand()
-            else -> false
-          }
-        }.onKeyEvent { event ->
-          if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-            state.submitCommand(
-              selectionSink = onSelection,
-              commandSink = onCommand,
-              cancelSink = onCancel,
-            )
+            when {
+              event.isCtrlPressed && event.key == Key.Tab -> {
+                if (event.isShiftPressed) {
+                  state.selectPreviousTile()
+                } else {
+                  state.selectNextTile()
+                }
+                true
+              }
 
-            true
-          } else {
-            false
-          }
-        }.focusable(),
+              event.isAltPressed -> {
+                val number = when (event.key) {
+                  Key.One -> 1
+                  Key.Two -> 2
+                  Key.Three -> 3
+                  Key.Four -> 4
+                  Key.Five -> 5
+                  Key.Six -> 6
+                  Key.Seven -> 7
+                  Key.Eight -> 8
+                  Key.Nine -> 9
+                  else -> null
+                }
+
+                if (number != null) {
+                  state.selectTileByNumber(number)
+                  true
+                } else {
+                  false
+                }
+              }
+
+              event.key == Key.DirectionUp -> state.previousCommand()
+              event.key == Key.DirectionDown -> state.nextCommand()
+
+              else -> false
+            }
+          }.onKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
+              state.submitCommand(
+                selectionSink = onSelection,
+                commandSink = onCommand,
+                cancelSink = onCancel,
+              )
+              focusRequester.requestFocus()
+              true
+            } else {
+              false
+            }
+          }.focusable(),
         singleLine = true,
         textStyle = TextStyle(
           color = theme.foreground,
