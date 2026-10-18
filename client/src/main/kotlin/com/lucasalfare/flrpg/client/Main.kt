@@ -259,6 +259,11 @@ class WorkspaceState {
 
   fun minimizedInstances(): List<TileInstance> = instances.values.filter { it.lifecycle == TileLifecycle.MINIMIZED }
 
+  fun isCompactMode(): Boolean {
+    val geometries = computeLeafGeometries(layoutRoot, 0f, 0f, logicalWidthDp, logicalHeightDp)
+    return geometries.any { it.width < MIN_TILE_WIDTH_DP || it.height < MIN_TILE_HEIGHT_DP }
+  }
+
   fun open(viewTextualId: String): Boolean {
     val definition = TileViewRegistry.definition(viewTextualId) ?: return false
 
@@ -477,6 +482,11 @@ class WorkspaceState {
     val id = TileId(nextIdValue)
     nextIdValue += 1
     return id
+  }
+
+  companion object {
+    const val MIN_TILE_WIDTH_DP = 280f
+    const val MIN_TILE_HEIGHT_DP = 180f
   }
 }
 
