@@ -850,6 +850,8 @@ class ClientPresentationState {
     "OFFLINE · sem ligação ao servidor"
   )
 
+  val workspace = WorkspaceState()
+
   private val commandHistory = mutableStateListOf<String>()
 
   private var historyIndex by mutableStateOf<Int?>(null)
@@ -992,6 +994,22 @@ class ClientPresentationState {
 
     if (command.isEmpty()) return
 
+    when (val parseResult = parseUiCommand(command)) {
+      is UiCommandParseResult.Success -> {
+        connectionMessage = dispatchLocalUiCommand(parseResult.command)
+        input = ""
+        return
+      }
+
+      is UiCommandParseResult.Failure -> {
+        connectionMessage = "UI · ${parseResult.reason}"
+        input = ""
+        return
+      }
+
+      UiCommandParseResult.NotUiCommand -> Unit
+    }
+
     val activeChoice = findActiveChoice(command)
 
     if (activeChoice != null) {
@@ -1091,6 +1109,93 @@ class ClientPresentationState {
       }
 
       else -> false
+    }
+  }
+
+  private fun dispatchLocalUiCommand(command: LocalUiCommand): String {
+    return when (command) {
+      LocalUiCommand.Help -> {
+        if (workspace.open("help")) {
+          "UI · help opened"
+        } else {
+          "UI · failed to open help"
+        }
+      }
+
+      LocalUiCommand.Tiles -> {
+        if (workspace.open("workspace")) {
+          "UI · workspace opened"
+        } else {
+          "UI · failed to open workspace"
+        }
+      }
+
+      is LocalUiCommand.Open -> {
+        if (workspace.open(command.viewTextualId)) {
+          "UI · ${command.viewTextualId} opened"
+        } else {
+          "UI · failed to open ${command.viewTextualId}"
+        }
+      }
+
+      is LocalUiCommand.Focus -> {
+        if (workspace.select(command.id)) {
+          "UI · focused tile ${command.id.value}"
+        } else {
+          "UI · cannot focus tile ${command.id.value}"
+        }
+      }
+
+      is LocalUiCommand.Close -> {
+        val target = command.id ?: workspace.selectedId
+        if (workspace.close(target)) {
+          "UI · closed tile ${target.value}"
+        } else {
+          "UI · cannot close tile ${target.value}"
+        }
+      }
+
+      is LocalUiCommand.Minimize -> {
+        val target = command.id ?: workspace.selectedId
+        if (workspace.minimize(target)) {
+          "UI · minimized tile ${target.value}"
+        } else {
+          "UI · cannot minimize tile ${target.value}"
+        }
+      }
+
+      is LocalUiCommand.Restore -> {
+        if (workspace.restore(command.id)) {
+          "UI · restored tile ${command.id.value}"
+        } else {
+          "UI · cannot restore tile ${command.id.value}"
+        }
+      }
+
+      is LocalUiCommand.Maximize -> {
+        val target = command.id ?: workspace.selectedId
+        if (workspace.maximize(target)) {
+          "UI · maximized tile ${target.value}"
+        } else {
+          "UI · cannot maximize tile ${target.value}"
+        }
+      }
+
+      LocalUiCommand.Unmaximize -> {
+        if (workspace.unmaximize()) {
+          "UI · unmaximized"
+        } else {
+          "UI · nothing to unmaximize"
+        }
+      }
+
+      is LocalUiCommand.Swap -> {
+        if (workspace.swap(command.firstId, command.secondId)) {
+          "UI · swapped tiles ${command.firstId.value} and ${command.secondId.value}"
+        } else {
+          "UI · cannot swap tiles ${command.firstId.value} and ${command.secondId.value}"
+        }
+      }
     }
   }
 
