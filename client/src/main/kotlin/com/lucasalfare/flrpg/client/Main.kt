@@ -382,6 +382,22 @@ class WorkspaceState {
     return true
   }
 
+  fun swap(firstId: TileId, secondId: TileId): Boolean {
+    if (firstId == secondId) return false
+
+    val first = instances[firstId] ?: return false
+    val second = instances[secondId] ?: return false
+
+    if (first.lifecycle != TileLifecycle.ACTIVE) return false
+    if (second.lifecycle != TileLifecycle.ACTIVE) return false
+    if (!layoutRoot.contains(firstId)) return false
+    if (!layoutRoot.contains(secondId)) return false
+
+    clearMaximization()
+    layoutRoot = layoutRoot.swapLeaves(firstId, secondId)
+    return true
+  }
+
   private fun insertIntoLargestRegion(newId: TileId) {
     val geometries = computeLeafGeometries(layoutRoot, 0f, 0f, logicalWidthDp, logicalHeightDp)
     if (geometries.isEmpty()) {
@@ -527,6 +543,21 @@ sealed class WorkspaceLayoutNode {
       if (!seen.add(id)) return true
     }
     return false
+  }
+
+  fun swapLeaves(a: TileId, b: TileId): WorkspaceLayoutNode = when (this) {
+    is Leaf -> when (tileId) {
+      a -> Leaf(b)
+      b -> Leaf(a)
+      else -> this
+    }
+
+    is Branch -> {
+      val newFirst = first.swapLeaves(a, b)
+      val newSecond = second.swapLeaves(a, b)
+      if (newFirst === first && newSecond === second) this
+      else copy(first = newFirst, second = newSecond)
+    }
   }
 }
 
