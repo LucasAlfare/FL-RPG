@@ -1,3 +1,6 @@
+/*
+acho que terminei de implementar! Quero saber algumas coisas antes de fazer o commit final e completo. Digamos que eu comece com a janela da aplicação de um tamanho MxN, se eu maximizar e abrir um "ui help" depois um "ui tiles" eu fico com 3 tiles tipo "3x1", mas se eu "restaurar" a janela, simplesmente bagunça tudo, vários tiles somem, etc. Talvez deva revisar esse tipo de interação. As animações não são tão legais. Não consigo ver os tiles "correndo" quando faço swap, não consigo ver os tiles "animando o tamanho" quando um novo tile aparece... etc! Tem certeza que essas animação que têm no código servem de algo? Quero que o campo de texto onde a gente digita os comandos fique sempre em foco, pois se não for o caso tenho que ficar clicando com o mouse nele toda hora pra poder digitar! O Foco deve estar nele, já o foco dos tiles talvez devesse ser tratado só como um foco lógico ou mesmo algo visual talvez... (não tô dizendo pra fazer isso, é só um pensamento que talvez possa ser vir de algo). Interprete melhor isso tudo que acabei de relatar e me fale se consegue me mandar a correção!
+ */
 package com.lucasalfare.flrpg.client
 
 import androidx.compose.animation.animateColorAsState
