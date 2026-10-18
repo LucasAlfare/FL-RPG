@@ -1509,6 +1509,59 @@ private object ClientUi {
   }
 
   @Composable
+  private fun RenderViewContent(
+    viewType: TileViewType,
+    document: PresentationDocument,
+    theme: TerminalTheme,
+  ) {
+    when (viewType) {
+      TileViewType.WORLD -> {
+        val blocks = document.blocks.filter { it.region != PresentationRegion.HISTORY }
+
+        Column(
+          Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+          if (blocks.isEmpty()) {
+            TextBlock(
+              theme,
+              "Sem dados recebidos.",
+              color = theme.muted,
+              small = true,
+            )
+          } else {
+            blocks.forEach { block ->
+              block.title?.let {
+                TextBlock(
+                  theme,
+                  it,
+                  color = theme.accent,
+                  heading = true,
+                )
+              }
+
+              PresentationBlockContent(
+                content = block.content,
+                theme = theme,
+              )
+            }
+          }
+        }
+      }
+
+      else -> {
+        val name = TileViewRegistry.definition(viewType)?.textualId ?: viewType.name.lowercase()
+        TextBlock(
+          theme,
+          "No content renderer for view '$name'.",
+          color = theme.muted,
+          small = true,
+        )
+      }
+    }
+  }
+
+  @Composable
   private fun CommandLine(
     state: ClientPresentationState,
     theme: TerminalTheme,
