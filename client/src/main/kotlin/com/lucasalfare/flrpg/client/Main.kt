@@ -1331,7 +1331,13 @@ private object ClientUi {
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
   ) {
-    TerminalTile("MENU", theme, modifier) {
+    TerminalTile(
+      id = TileId(0),
+      title = "MENU",
+      selected = false,
+      theme = theme,
+      modifier = modifier,
+    ) {
       SelectionContainer {
         TextBlock(
           theme,
@@ -1398,7 +1404,13 @@ private object ClientUi {
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
   ) {
-    TerminalTile(label, theme, modifier) {
+    TerminalTile(
+      id = TileId(0),
+      title = label,
+      selected = false,
+      theme = theme,
+      modifier = modifier,
+    ) {
       Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1570,7 +1582,9 @@ private object ClientUi {
 
   @Composable
   private fun TerminalTile(
+    id: TileId,
     title: String,
+    selected: Boolean,
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
@@ -1580,8 +1594,9 @@ private object ClientUi {
       verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
       SelectionContainer {
+        val selectionMark = if (selected) " * " else "   "
         Text(
-          "┌─ $title",
+          "┌─ [${id.value}]$selectionMark$title",
           color = theme.accent,
           fontFamily = mono,
           fontSize = 12.sp,
