@@ -1562,6 +1562,82 @@ private object ClientUi {
   }
 
   @Composable
+  private fun WorkspaceLayout(
+    node: WorkspaceLayoutNode,
+    workspace: WorkspaceState,
+    document: PresentationDocument,
+    theme: TerminalTheme,
+    modifier: Modifier = Modifier,
+  ) {
+    when (node) {
+      is WorkspaceLayoutNode.Leaf -> {
+        val instance = workspace.instance(node.tileId) ?: return
+        TerminalTile(
+          id = instance.id,
+          title = instance.title,
+          selected = workspace.selectedId == instance.id,
+          theme = theme,
+          modifier = modifier,
+        ) {
+          RenderViewContent(
+            viewType = instance.viewType,
+            document = document,
+            theme = theme,
+          )
+        }
+      }
+
+      is WorkspaceLayoutNode.Branch -> {
+        when (node.orientation) {
+          SplitOrientation.ROW -> {
+            Row(
+              modifier = modifier,
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              WorkspaceLayout(
+                node = node.first,
+                workspace = workspace,
+                document = document,
+                theme = theme,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+              )
+              WorkspaceLayout(
+                node = node.second,
+                workspace = workspace,
+                document = document,
+                theme = theme,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+              )
+            }
+          }
+
+          SplitOrientation.COLUMN -> {
+            Column(
+              modifier = modifier,
+              verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              WorkspaceLayout(
+                node = node.first,
+                workspace = workspace,
+                document = document,
+                theme = theme,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+              )
+              WorkspaceLayout(
+                node = node.second,
+                workspace = workspace,
+                document = document,
+                theme = theme,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @Composable
   private fun CommandLine(
     state: ClientPresentationState,
     theme: TerminalTheme,
