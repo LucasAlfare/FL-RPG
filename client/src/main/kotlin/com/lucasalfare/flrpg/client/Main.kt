@@ -303,6 +303,26 @@ class WorkspaceState {
     return true
   }
 
+  fun close(id: TileId): Boolean {
+    if (id == mainTileId) return false
+
+    val current = instances[id] ?: return false
+    if (current.lifecycle != TileLifecycle.ACTIVE) return false
+    if (!layoutRoot.contains(id)) return false
+
+    val newRoot = layoutRoot.removeLeaf(id) ?: return false
+
+    clearMaximization()
+    layoutRoot = newRoot
+    instances.remove(id)
+
+    if (selectedId == id) {
+      selectedId = newRoot.visualLeaves().first()
+    }
+
+    return true
+  }
+
   private fun insertIntoLargestRegion(newId: TileId) {
     val geometries = computeLeafGeometries(layoutRoot, 0f, 0f, logicalWidthDp, logicalHeightDp)
     if (geometries.isEmpty()) {
@@ -395,6 +415,20 @@ private fun WorkspaceLayoutNode.replaceLeaf(
     val newSecond = second.replaceLeaf(targetId, replacement)
     if (newFirst === first && newSecond === second) this
     else copy(first = newFirst, second = newSecond)
+  }
+}
+
+private fun WorkspaceLayoutNode.removeLeaf(targetId: TileId): WorkspaceLayoutNode? = when (this) {
+  is WorkspaceLayoutNode.Leaf -> if (tileId == targetId) null else this
+  is WorkspaceLayoutNode.Branch -> {
+    val newFirst = first.removeLeaf(targetId)
+    val newSecond = second.removeLeaf(targetId)
+    when {
+      newFirst == null -> newSecond
+      newSecond == null -> newFirst
+      newFirst === first && newSecond === second -> this
+      else -> copy(first = newFirst, second = newSecond)
+    }
   }
 }
 
