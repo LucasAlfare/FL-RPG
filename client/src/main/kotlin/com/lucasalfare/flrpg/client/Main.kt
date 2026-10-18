@@ -203,6 +203,66 @@ class ClientConnection(
   }
 }
 
+// workspace model
+
+@JvmInline
+value class TileId(val value: Int)
+
+enum class TileViewType {
+  WORLD, HELP, WORKSPACE, HISTORY,
+}
+
+enum class TileLifecycle {
+  ACTIVE, MINIMIZED,
+}
+
+data class TileInstance(
+  val id: TileId,
+  val viewType: TileViewType,
+  val lifecycle: TileLifecycle,
+  val title: String,
+)
+
+class WorkspaceState {
+  private val instances = linkedMapOf<TileId, TileInstance>()
+  private var nextIdValue = 1
+
+  val mainTileId: TileId
+  var selectedId: TileId
+    private set
+  var maximizedId: TileId? = null
+    private set
+  var logicalWidthDp: Float = 1280f
+  var logicalHeightDp: Float = 720f
+
+  init {
+    val worldId = allocateId()
+    val world = TileInstance(
+      id = worldId,
+      viewType = TileViewType.WORLD,
+      lifecycle = TileLifecycle.ACTIVE,
+      title = "World",
+    )
+    instances[worldId] = world
+    mainTileId = worldId
+    selectedId = worldId
+  }
+
+  fun instance(id: TileId): TileInstance? = instances[id]
+
+  fun allInstances(): Collection<TileInstance> = instances.values
+
+  fun activeInstances(): List<TileInstance> = instances.values.filter { it.lifecycle == TileLifecycle.ACTIVE }
+
+  fun minimizedInstances(): List<TileInstance> = instances.values.filter { it.lifecycle == TileLifecycle.MINIMIZED }
+
+  private fun allocateId(): TileId {
+    val id = TileId(nextIdValue)
+    nextIdValue += 1
+    return id
+  }
+}
+
 //state
 
 private enum class ClientScreen {
