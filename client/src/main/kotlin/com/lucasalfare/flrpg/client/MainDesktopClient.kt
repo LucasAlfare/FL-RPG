@@ -899,6 +899,9 @@ class ClientPresentationState {
 
   var activeOperationMessageId: MessageId? by mutableStateOf(null)
 
+  private var trackedActivityId: String? = null
+  private val pendingOperationMessageIds = mutableListOf<MessageId>()
+
   val document: PresentationDocument
     get() {
       val base = serverDocument
@@ -950,9 +953,23 @@ class ClientPresentationState {
     workspaceEpoch += 1
   }
 
+  fun trackOperationStarted(messageId: MessageId) {
+    activeOperationMessageId = messageId
+    if (!pendingOperationMessageIds.contains(messageId)) {
+      pendingOperationMessageIds.add(messageId)
+    }
+  }
+
+  fun resetConnectionState() {
+    activeOperationMessageId = null
+    trackedActivityId = null
+    pendingOperationMessageIds.clear()
+  }
+
   fun receive(message: ServerMessage) {
     when (message) {
       is ServerWelcome -> {
+        resetConnectionState()
         connectionMessage = if (message.isResumed) {
           "CONECTADO · sessão retoma"
         } else {
@@ -962,7 +979,13 @@ class ClientPresentationState {
 
       is ServerReject -> {
         connectionMessage = "REJEITADO · ${message.reason}"
-        activeOperationMessageId = null
+        val targetMsgId = message.correlationId?.let { MessageId(it.value) } ?: activeOperationMessageId
+        if (targetMsgId != null) {
+          pendingOperationMessageIds.remove(targetMsgId)
+        }
+        if (activeOperationMessageId == targetMsgId) {
+          activeOperationMessageId = null
+        }
       }
 
       is ServerAccepted -> {
@@ -976,8 +999,13 @@ class ClientPresentationState {
 
         message.facts.forEach { fact ->
           appendHistory(fact.name, fact.arguments)
+          processLifecycleFact(fact.name, fact.arguments)
+        }
 
-          if (fact.name == "character_movement_completed" || fact.name == "character_movement_interrupted" || fact.name == "activity_cancelled") {
+        val correlationMsgId = message.correlationId?.let { MessageId(it.value) }
+        if (correlationMsgId != null) {
+          pendingOperationMessageIds.remove(correlationMsgId)
+          if (activeOperationMessageId == correlationMsgId && trackedActivityId == null) {
             activeOperationMessageId = null
           }
         }
@@ -986,6 +1014,7 @@ class ClientPresentationState {
       is ServerEvent -> {
         connectionMessage = "EVENTO · ${message.type}"
         appendHistory(message.type, message.payload)
+        processLifecycleFact(message.type, message.payload)
       }
 
       is PresentationSnapshot -> {
@@ -1010,16 +1039,55 @@ class ClientPresentationState {
 
       is ServerRejected -> {
         connectionMessage = "SERVIDOR REJEITOU · ${message.reason}"
-        activeOperationMessageId = null
+        val targetMsgId = message.correlationId?.let { MessageId(it.value) } ?: activeOperationMessageId
+        if (targetMsgId != null) {
+          pendingOperationMessageIds.remove(targetMsgId)
+        }
+        if (activeOperationMessageId == targetMsgId) {
+          activeOperationMessageId = null
+        }
       }
 
       is ServerFailed -> {
         connectionMessage = "FALHA NO SERVIDOR · ${message.error}"
-        activeOperationMessageId = null
+        val targetMsgId = message.correlationId?.let { MessageId(it.value) } ?: activeOperationMessageId
+        if (targetMsgId != null) {
+          pendingOperationMessageIds.remove(targetMsgId)
+        }
+        if (activeOperationMessageId == targetMsgId) {
+          activeOperationMessageId = null
+        }
       }
 
       is ServerProtocolError -> {
         connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
+      }
+    }
+  }
+
+  private fun processLifecycleFact(
+    factName: String,
+    args: Map<String, String>,
+  ) {
+    val activityId = args["activityId"]
+
+    when (factName) {
+      "activity_started" -> {
+        if (activityId != null) {
+          trackedActivityId = activityId
+        }
+      }
+
+      "activity_completed", "activity_cancelled", "activity_interrupted", "activity_failed", "character_movement_completed", "character_movement_interrupted" -> {
+        if (activityId != null && trackedActivityId != null) {
+          if (activityId == trackedActivityId) {
+            trackedActivityId = null
+            activeOperationMessageId = null
+          }
+        } else {
+          trackedActivityId = null
+          activeOperationMessageId = null
+        }
       }
     }
   }
@@ -2172,9 +2240,12 @@ fun main() = application {
         onServerMessage = state::receive,
         onConnectionMessage = { message ->
           state.connectionMessage = message
+          if (message.startsWith("OFFLINE") || message.startsWith("FALHA")) {
+            state.resetConnectionState()
+          }
         },
         onOperationStarted = { messageId ->
-          state.activeOperationMessageId = messageId
+          state.trackOperationStarted(messageId)
         },
       )
     }
@@ -2188,6 +2259,7 @@ fun main() = application {
     DisposableEffect(connection) {
       onDispose {
         connection.close()
+        state.resetConnectionState()
       }
     }
 
