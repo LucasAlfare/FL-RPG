@@ -28,7 +28,14 @@ value class SpeedCmPerSecond(val value: Long) {
 @JvmInline
 value class SimulationSeconds(val value: Long) {
   init {
-    require(value >= 0L) { "Simulation duration cannot be negative." }
+    require(value >= -1L) { "Simulation duration cannot be negative." }
+  }
+
+  val isUnknown: Boolean
+    get() = value == -1L
+
+  companion object {
+    val UNKNOWN = SimulationSeconds(-1L)
   }
 }
 
@@ -62,7 +69,7 @@ data class Activity(
   val status: ActivityStatus = ActivityStatus.RUNNING
 ) {
   init {
-    if (status == ActivityStatus.RUNNING) {
+    if (status == ActivityStatus.RUNNING && !duration.isUnknown) {
       require(duration.value > 0L) {
         "Timed activities must have strictly positive duration."
       }
