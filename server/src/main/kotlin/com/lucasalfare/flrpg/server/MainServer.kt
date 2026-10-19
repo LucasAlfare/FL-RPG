@@ -526,10 +526,19 @@ suspend fun handleGameActionExecution(
   originatingMessageId: MessageId,
   sessionId: SessionId,
   characterId: CharacterId,
-  correlationId: CorrelationId
+  correlationId: CorrelationId,
+  gameActionName: String? = null
 ): ServerMessage {
   return when (val result = execution.result) {
     is GameActionResult.Success -> {
+      if (gameActionName == "cancel_activity") {
+        val activityIdStr = result.facts.firstNotNullOfOrNull { it.arguments["activityId"]?.toString() }
+          ?: execution.factAudiences.firstNotNullOfOrNull { audience -> audience.fact.arguments["activityId"]?.toString() }
+        if (activityIdStr != null) {
+          correlationRegistry.removeByActivityId(ActivityId(activityIdStr))
+        }
+      }
+
       val protocolFacts = result.facts.map { fact ->
         ProtocolFact(
           name = fact.name, arguments = fact.arguments.mapValues { (_, value) -> value?.toString() ?: "" })
@@ -882,7 +891,8 @@ suspend fun handleConnection(
                   originatingMessageId = message.metadata.messageId,
                   sessionId = currentSessionId,
                   characterId = characterId,
-                  correlationId = correlationId
+                  correlationId = correlationId,
+                  gameActionName = interaction.actionName
                 )
               }
             }
@@ -981,7 +991,8 @@ suspend fun handleConnection(
                       originatingMessageId = message.metadata.messageId,
                       sessionId = currentSessionId,
                       characterId = characterId,
-                      correlationId = correlationId
+                      correlationId = correlationId,
+                      gameActionName = pending.interaction.actionName
                     )
                   }
                 }
@@ -1013,55 +1024,26 @@ suspend fun handleConnection(
               if (targetActivityId != null) {
                 val characterId = registry.findCharacterIdBySessionId(currentSessionId)
                 if (characterId != null) {
-                  when (val cancelResult = actionProcessor.nucleus.cancelActivity(characterId, targetActivityId)) {
-                    is GameActionResult.Success -> {
-                      correlationRegistry.removeByActivityId(targetActivityId)
-                      val protocolFacts = cancelResult.facts.map { fact ->
-                        ProtocolFact(
-                          name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
-                            value?.toString() ?: ""
-                          })
-                      }
-                      ServerCompleted(
-                        metadata = MessageMetadata(
-                          messageId = MessageId(UUID.randomUUID().toString()),
-                          sessionId = currentSessionId,
-                          sequence = Sequence.ZERO,
-                          correlationId = correlationId
-                        ), facts = protocolFacts
-                      ).also {
-                        distributeFacts(cancelResult.facts, registry, actionProcessor, excludeCharacterId = characterId)
-                        presentAvailableInteractions(
-                          connection = connection,
-                          actionProcessor = actionProcessor,
-                          offerRegistry = offerRegistry,
-                          preparer = presentationPreparer
-                        )
-                      }
-                    }
-
-                    is GameActionResult.Rejected -> {
-                      ServerRejected(
-                        metadata = MessageMetadata(
-                          messageId = MessageId(UUID.randomUUID().toString()),
-                          sessionId = currentSessionId,
-                          sequence = Sequence.ZERO,
-                          correlationId = correlationId
-                        ), reason = cancelResult.reason
-                      )
-                    }
-
-                    else -> {
-                      ServerRejected(
-                        metadata = MessageMetadata(
-                          messageId = MessageId(UUID.randomUUID().toString()),
-                          sessionId = currentSessionId,
-                          sequence = Sequence.ZERO,
-                          correlationId = correlationId
-                        ), reason = "Could not cancel activity."
-                      )
-                    }
-                  }
+                  val gameAction = GameAction(
+                    name = "cancel_activity",
+                    actorId = characterId,
+                    arguments = mapOf("activityId" to targetActivityId.value)
+                  )
+                  val execution = actionProcessor.processWithAudiences(gameAction)
+                  handleGameActionExecution(
+                    execution = execution,
+                    connection = connection,
+                    registry = registry,
+                    actionProcessor = actionProcessor,
+                    offerRegistry = offerRegistry,
+                    presentationPreparer = presentationPreparer,
+                    correlationRegistry = correlationRegistry,
+                    originatingMessageId = message.metadata.messageId,
+                    sessionId = currentSessionId,
+                    characterId = characterId,
+                    correlationId = correlationId,
+                    gameActionName = "cancel_activity"
+                  )
                 } else {
                   ServerRejected(
                     metadata = MessageMetadata(
@@ -1086,14 +1068,6 @@ suspend fun handleConnection(
           }
 
           connection.send(responseMessage)
-          if (responseMessage is ServerCompleted) {
-            presentAvailableInteractions(
-              connection = connection,
-              actionProcessor = actionProcessor,
-              offerRegistry = offerRegistry,
-              preparer = presentationPreparer
-            )
-          }
         }
       }
     }
