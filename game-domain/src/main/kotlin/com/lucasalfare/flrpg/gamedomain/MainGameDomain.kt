@@ -270,6 +270,18 @@ class Nucleus(
       _characters.keys.toSet()
     }
 
+  fun canCancelActivity(characterId: CharacterId, activityId: ActivityId): Boolean = synchronized(stateLock) {
+    val activity = getActivity(activityId) ?: return false
+    if (activity.characterId != characterId || activity.isTerminal) {
+      return false
+    }
+    if (!activity.cancellable) {
+      return false
+    }
+    val handler = _activityHandlers[activity.type]
+    return handler?.isCancellable(activity, this) ?: true
+  }
+
   fun hasBlockingActivity(characterId: CharacterId): Boolean = synchronized(stateLock) {
     getActiveActivitiesForCharacter(characterId).any { it.mode == ActivityMode.BLOCKING }
   }
@@ -516,6 +528,10 @@ class Nucleus(
 
     if (activity.isTerminal) {
       return GameActionResult.Rejected("Activity '${activityId.value}' is already terminated.")
+    }
+
+    if (!canCancelActivity(characterId, activityId)) {
+      return GameActionResult.Rejected("Activity '${activityId.value}' cannot be cancelled.")
     }
 
     val handler = _activityHandlers[activity.type]
