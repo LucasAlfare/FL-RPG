@@ -145,35 +145,37 @@ class SessionInteractionOperationRegistry {
   }
 }
 
-fun interface ShortcutAssigner {
-  fun assign(choices: List<Choice>): List<Choice>
+interface ShortcutAssigner {
+  fun assign(choices: List<Choice>, existingShortcuts: Map<String, String> = emptyMap()): List<Choice>
 }
 
 class SequentialLetterShortcutAssigner : ShortcutAssigner {
 
-  override fun assign(choices: List<Choice>): List<Choice> {
+  override fun assign(choices: List<Choice>, existingShortcuts: Map<String, String>): List<Choice> {
     if (choices.isEmpty()) return choices
 
     val used = mutableSetOf<String>()
+    val preAssigned = mutableMapOf<String, String>()
+
     for (choice in choices) {
-      val existing = choice.shortcut
+      val existing = choice.shortcut ?: existingShortcuts[choice.id]
       if (existing != null && choice.enabled) {
         require(used.add(existing)) {
           "Conflicting shortcut '$existing' among simultaneously selectable choices."
         }
+        preAssigned[choice.id] = existing
       }
     }
 
     var nextIndex = 0
     return choices.map { choice ->
-      if (choice.shortcut != null) {
-        choice
-      } else {
-        val shortcut = nextAvailable(used, nextIndex)
-        nextIndex = shortcut.second
-        used.add(shortcut.first)
-        choice.copy(shortcut = shortcut.first)
+      val shortcut = preAssigned[choice.id] ?: run {
+        val assigned = nextAvailable(used, nextIndex)
+        nextIndex = assigned.second
+        used.add(assigned.first)
+        assigned.first
       }
+      choice.copy(shortcut = shortcut)
     }.also { result ->
       validateNoConflicts(result)
     }
@@ -218,9 +220,10 @@ class FixedShortcutAssigner(
   private val shortcutsByChoiceId: Map<String, String>
 ) : ShortcutAssigner {
 
-  override fun assign(choices: List<Choice>): List<Choice> {
+  override fun assign(choices: List<Choice>, existingShortcuts: Map<String, String>): List<Choice> {
+    val combined = existingShortcuts + shortcutsByChoiceId
     val result = choices.map { choice ->
-      val mapped = shortcutsByChoiceId[choice.id]
+      val mapped = combined[choice.id] ?: choice.shortcut
       if (mapped != null) {
         choice.copy(shortcut = mapped)
       } else {
@@ -260,11 +263,20 @@ class SessionOfferState {
     private set
 
   private val offeredByChoiceId = ConcurrentHashMap<String, Interaction>()
+  private val persistentShortcuts = ConcurrentHashMap<String, String>()
 
-  fun replaceOffers(offered: List<OfferedOption>, newRevision: Revision) {
+  fun replaceOffers(offered: List<OfferedOption>, newRevision: Revision, choices: List<Choice> = emptyList()) {
     offeredByChoiceId.clear()
     for (option in offered) {
       offeredByChoiceId[option.choiceId] = option.interaction
+    }
+    if (choices.isNotEmpty()) {
+      persistentShortcuts.clear()
+      for (choice in choices) {
+        if (choice.shortcut != null) {
+          persistentShortcuts[choice.id] = choice.shortcut!!
+        }
+      }
     }
     revision = newRevision
   }
@@ -273,10 +285,13 @@ class SessionOfferState {
 
   fun clear() {
     offeredByChoiceId.clear()
+    persistentShortcuts.clear()
     revision = Revision.ZERO
   }
 
   fun offeredSnapshot(): Map<String, Interaction> = offeredByChoiceId.toMap()
+
+  fun getPersistentShortcuts(): Map<String, String> = persistentShortcuts.toMap()
 }
 
 class SessionOfferRegistry {
@@ -297,7 +312,11 @@ class InteractionPresentationPreparer(
   private val preferredShortcutsByInteractionId: Map<String, String> = emptyMap()
 ) {
 
-  fun prepare(interactions: List<Interaction>, baseRevision: Revision = Revision.ZERO): PreparedPresentation {
+  fun prepare(
+    interactions: List<Interaction>,
+    baseRevision: Revision = Revision.ZERO,
+    existingShortcuts: Map<String, String> = emptyMap()
+  ): PreparedPresentation {
     val offered = interactions.map { interaction ->
       OfferedOption(
         choiceId = selectionIdFor(interaction), interaction = interaction
@@ -308,12 +327,12 @@ class InteractionPresentationPreparer(
       Choice(
         id = option.choiceId,
         text = option.interaction.label,
-        shortcut = preferredShortcutsByInteractionId[option.interaction.id.value],
+        shortcut = preferredShortcutsByInteractionId[option.interaction.id.value] ?: existingShortcuts[option.choiceId],
         enabled = true
       )
     }
 
-    val choices = shortcutAssigner.assign(rawChoices)
+    val choices = shortcutAssigner.assign(rawChoices, existingShortcuts)
     val newRevision = baseRevision.next()
     val document = PresentationDocument(
       revision = newRevision, blocks = listOf(
@@ -336,7 +355,8 @@ class InteractionPresentationPreparer(
     locationName: String?,
     movementDestinationName: String?,
     activityProgressDetails: List<ActivityProgressDetails> = emptyList(),
-    baseRevision: Revision = Revision.ZERO
+    baseRevision: Revision = Revision.ZERO,
+    existingShortcuts: Map<String, String> = emptyMap()
   ): PreparedPresentation {
     val offered = interactions.map { interaction ->
       OfferedOption(
@@ -348,12 +368,12 @@ class InteractionPresentationPreparer(
       Choice(
         id = option.choiceId,
         text = option.interaction.label,
-        shortcut = preferredShortcutsByInteractionId[option.interaction.id.value],
+        shortcut = preferredShortcutsByInteractionId[option.interaction.id.value] ?: existingShortcuts[option.choiceId],
         enabled = true
       )
     }
 
-    val choices = shortcutAssigner.assign(rawChoices)
+    val choices = shortcutAssigner.assign(rawChoices, existingShortcuts)
     val newRevision = baseRevision.next()
 
     val contextBlocks = mutableListOf<PresentationBlock>()
@@ -643,15 +663,17 @@ suspend fun presentAvailableInteractions(
 
   val offerState = offerRegistry.getOrCreate(sessionId)
   offerState.updateMutex.withLock {
+    val existingShortcuts = offerState.getPersistentShortcuts()
     val prepared = preparer.prepareWithLocation(
       interactions = interactions,
       locationName = locationName,
       movementDestinationName = movementDestinationName,
       activityProgressDetails = activityProgressDetails,
-      baseRevision = offerState.revision
+      baseRevision = offerState.revision,
+      existingShortcuts = existingShortcuts
     )
 
-    offerState.replaceOffers(prepared.offered, prepared.document.revision)
+    offerState.replaceOffers(prepared.offered, prepared.document.revision, prepared.choices)
 
     val snapshot = preparer.toSnapshot(sessionId, prepared)
     connection.send(snapshot)
@@ -811,9 +833,10 @@ suspend fun handleConnection(
                     locationName = locationName,
                     movementDestinationName = movementDestinationName,
                     activityProgressDetails = activityProgressDetails,
-                    baseRevision = offerState.revision
+                    baseRevision = offerState.revision,
+                    existingShortcuts = offerState.getPersistentShortcuts()
                   )
-                  offerState.replaceOffers(preparedMenu.offered, preparedMenu.document.revision)
+                  offerState.replaceOffers(preparedMenu.offered, preparedMenu.document.revision, preparedMenu.choices)
 
                   val menuSnapshot = presentationPreparer.toSnapshot(
                     sessionId = currentSessionId, prepared = preparedMenu
