@@ -258,6 +258,10 @@ class Nucleus(
       _characters.keys.toSet()
     }
 
+  fun hasBlockingActivity(characterId: CharacterId): Boolean = synchronized(stateLock) {
+    getActiveActivitiesForCharacter(characterId).any { it.mode == ActivityMode.BLOCKING }
+  }
+
   fun getActivityProgressDetails(
     activityId: ActivityId,
     currentSimulationTime: SimulationSeconds = SimulationSeconds(world.clock.currentInstant.value)
@@ -629,13 +633,11 @@ class DefaultInteractionProvider : InteractionProvider {
       )
     }
 
-    val entityId = WorldEntityId(characterId.value)
-
-    val activeActivity = nucleus.getActiveActivityForCharacter(characterId)
-    if (activeActivity != null && activeActivity.mode == ActivityMode.BLOCKING) {
+    if (nucleus.hasBlockingActivity(characterId)) {
       return emptyList()
     }
 
+    val entityId = WorldEntityId(characterId.value)
     val currentLocationId = nucleus.world.state.getLocation(entityId) ?: return emptyList()
 
     val destinationInteractions =
@@ -948,10 +950,10 @@ class GameActionProcessor(
   private fun processLocked(
     action: GameAction
   ): GameActionResult {
-    val activeActivity = nucleus.getActiveActivityForCharacter(action.actorId)
-    if (activeActivity != null && activeActivity.mode == ActivityMode.BLOCKING && action.name != "cancel_activity") {
+    if (nucleus.hasBlockingActivity(action.actorId) && action.name != "cancel_activity") {
+      val blocking = nucleus.getActiveActivityForCharacter(action.actorId)
       return GameActionResult.Rejected(
-        "Character '${action.actorId.value}' is busy with a blocking activity: ${activeActivity.description}"
+        "Character '${action.actorId.value}' is busy with a blocking activity: ${blocking?.description ?: "unknown"}"
       )
     }
 
