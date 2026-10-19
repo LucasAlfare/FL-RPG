@@ -86,8 +86,9 @@ data class ActivityProgressDetails(
   val type: ActivityType,
   val description: String,
   val mode: ActivityMode,
-  val progress: Double,
-  val remainingTime: SimulationSeconds
+  val progress: Double?,
+  val remainingTime: SimulationSeconds?,
+  val elapsedTime: SimulationSeconds
 )
 
 interface ActivityHandler {
@@ -277,9 +278,18 @@ class Nucleus(
   ): ActivityProgressDetails? = synchronized(stateLock) {
     val activity = _activities[activityId] ?: return null
     if (activity.isTerminal) return null
-    val progress = getActivityProgress(activityId, currentSimulationTime)
-    val elapsed = (currentSimulationTime.value - activity.startTime.value).coerceAtLeast(0L)
-    val remaining = (activity.duration.value - elapsed).coerceAtLeast(0L)
+    val elapsedValue = (currentSimulationTime.value - activity.startTime.value).coerceAtLeast(0L)
+    val elapsedTime = SimulationSeconds(elapsedValue)
+    val progress: Double?
+    val remainingTime: SimulationSeconds?
+    if (activity.duration.isUnknown) {
+      progress = null
+      remainingTime = null
+    } else {
+      progress = getActivityProgress(activityId, currentSimulationTime)
+      val remainingValue = (activity.duration.value - elapsedValue).coerceAtLeast(0L)
+      remainingTime = SimulationSeconds(remainingValue)
+    }
     ActivityProgressDetails(
       activityId = activity.id,
       characterId = activity.characterId,
@@ -287,7 +297,8 @@ class Nucleus(
       description = activity.description,
       mode = activity.mode,
       progress = progress,
-      remainingTime = SimulationSeconds(remaining)
+      remainingTime = remainingTime,
+      elapsedTime = elapsedTime
     )
   }
 
@@ -912,7 +923,8 @@ class GameActionProcessor(
         nucleus.getActiveActivitiesForCharacter(characterId).firstOrNull { it.type == ActivityType.MOVEMENT }
           ?: return@synchronized null
       val details = nucleus.getActivityProgressDetails(movementActivity.id) ?: return@synchronized null
-      Triple(details.description, details.progress, details.remainingTime)
+      val progress = details.progress ?: return@synchronized null
+      Triple(details.description, progress, details.remainingTime)
     }
 
   fun getCharacterLocationDisplayName(characterId: CharacterId): String? = synchronized(nucleus.stateLock) {
