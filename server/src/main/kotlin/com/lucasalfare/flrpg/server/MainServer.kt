@@ -379,12 +379,15 @@ class InteractionPresentationPreparer(
     }
 
     for (details in activityProgressDetails) {
-      val percent = (details.progress * 100).toInt().coerceIn(0, 100)
-      val remainingText = " · Remaining: ${details.remainingTime.value}s"
+      val progressPart = details.progress?.let { p ->
+        val percent = (p * 100).toInt().coerceIn(0, 100)
+        val remainingText = details.remainingTime?.let { " · Remaining: ${it.value}s" } ?: ""
+        " ($percent% complete$remainingText)"
+      } ?: " (Elapsed: ${details.elapsedTime.value}s)"
       contextBlocks.add(
         PresentationBlock(
           id = BlockId("activity_${details.activityId.value}"), content = BlockContent.Text(
-            text = "⏳ ${details.description} ($percent% complete$remainingText)", style = TextStyle.HIGHLIGHT
+            text = "⏳ ${details.description}$progressPart", style = TextStyle.HIGHLIGHT
           ), title = "Current activity", region = PresentationRegion.MAIN
         )
       )
