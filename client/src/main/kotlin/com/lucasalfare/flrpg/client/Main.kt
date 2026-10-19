@@ -2,7 +2,7 @@ package com.lucasalfare.flrpg.client
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -18,6 +18,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -519,6 +520,41 @@ class WorkspaceState {
   }
 }
 
+class WorkspaceAnimationSettings {
+  var enabled by mutableStateOf(true)
+
+  fun toggle(): Boolean {
+    enabled = !enabled
+    return enabled
+  }
+}
+
+@Composable
+fun Modifier.tileAnimation(
+  tileId: TileId, enabled: Boolean
+): Modifier {
+  if (!enabled) return this
+
+  val transitionState = remember { MutableTransitionState(false).apply { targetState = true } }
+  val transition = rememberTransition(transitionState, label = "tileAppearance")
+
+  val scale by transition.animateFloat(
+    transitionSpec = {
+      spring(
+        dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow
+      )
+    }, label = "tileScale"
+  ) { if (it) 1f else 0.85f }
+
+  val alpha by transition.animateFloat(
+    transitionSpec = { tween(durationMillis = 220) }, label = "tileAlpha"
+  ) { if (it) 1f else 0f }
+
+  return this.graphicsLayer(
+    scaleX = scale, scaleY = scale, alpha = alpha
+  )
+}
+
 private fun WorkspaceLayoutNode.replaceLeaf(
   targetId: TileId,
   replacement: WorkspaceLayoutNode,
@@ -666,6 +702,7 @@ object TileViewRegistry {
 sealed class LocalUiCommand {
   data object Help : LocalUiCommand()
   data object Tiles : LocalUiCommand()
+  data object Animations : LocalUiCommand()
   data class Open(val viewTextualId: String) : LocalUiCommand()
   data class Focus(val id: TileId) : LocalUiCommand()
   data class Close(val id: TileId?) : LocalUiCommand()
@@ -834,6 +871,14 @@ fun parseUiCommand(input: String): UiCommandParseResult {
       }
     }
 
+    "animations" -> {
+      if (args.isNotEmpty()) {
+        UiCommandParseResult.Failure("'ui animations' does not accept arguments")
+      } else {
+        UiCommandParseResult.Success(LocalUiCommand.Animations)
+      }
+    }
+
     else -> UiCommandParseResult.Failure("unknown ui command '$verb'")
   }
 }
@@ -891,6 +936,7 @@ class ClientPresentationState {
   )
 
   val workspace = WorkspaceState()
+  val animationSettings = WorkspaceAnimationSettings()
 
   var workspaceEpoch by mutableStateOf(0)
     private set
@@ -1262,6 +1308,11 @@ class ClientPresentationState {
           "UI · cannot swap tiles ${command.firstId.value} and ${command.secondId.value}"
         }
       }
+
+      LocalUiCommand.Animations -> {
+        val newState = animationSettings.toggle()
+        "UI · animations " + if (newState) "enabled" else "disabled"
+      }
     }
     touchWorkspace()
     return message
@@ -1365,6 +1416,7 @@ private object ClientUi {
       if (state.isMenuOpen) {
         MenuScreen(
           theme = theme,
+          animationsEnabled = state.animationSettings.enabled,
           modifier = Modifier.weight(1f).fillMaxWidth(),
         )
       } else {
@@ -1374,6 +1426,7 @@ private object ClientUi {
           workspaceEpoch = state.workspaceEpoch,
           theme = theme,
           activeOperationMessageId = state.activeOperationMessageId,
+          animationsEnabled = state.animationSettings.enabled, // <-- Passando aqui
           modifier = Modifier.weight(1f).fillMaxWidth(),
         )
       }
@@ -1400,6 +1453,7 @@ private object ClientUi {
   @Composable
   private fun MenuScreen(
     theme: TerminalTheme,
+    animationsEnabled: Boolean,
     modifier: Modifier = Modifier,
   ) {
     TerminalTile(
@@ -1407,6 +1461,7 @@ private object ClientUi {
       title = "MENU",
       selected = false,
       theme = theme,
+      animationsEnabled = animationsEnabled,
       modifier = modifier,
     ) {
       SelectionContainer {
@@ -1425,6 +1480,7 @@ private object ClientUi {
     workspaceEpoch: Int,
     theme: TerminalTheme,
     activeOperationMessageId: MessageId?,
+    animationsEnabled: Boolean,
     modifier: Modifier = Modifier,
   ) {
     BoxWithConstraints(
@@ -1446,6 +1502,7 @@ private object ClientUi {
             title = instance.title,
             selected = true,
             theme = theme,
+            animationsEnabled = animationsEnabled,
             modifier = Modifier.fillMaxSize(),
           ) {
             RenderViewContent(
@@ -1465,6 +1522,7 @@ private object ClientUi {
             title = instance.title,
             selected = true,
             theme = theme,
+            animationsEnabled = animationsEnabled,
             modifier = Modifier.fillMaxSize(),
           ) {
             RenderViewContent(
@@ -1484,6 +1542,7 @@ private object ClientUi {
             document = document,
             theme = theme,
             activeOperationMessageId = activeOperationMessageId,
+            animationsEnabled = animationsEnabled,
             modifier = Modifier.fillMaxSize(),
           )
         }
@@ -1821,6 +1880,7 @@ private object ClientUi {
     document: PresentationDocument,
     theme: TerminalTheme,
     activeOperationMessageId: MessageId?,
+    animationsEnabled: Boolean,
     modifier: Modifier = Modifier,
   ) {
     when (node) {
@@ -1831,6 +1891,7 @@ private object ClientUi {
           title = instance.title,
           selected = workspace.selectedId == instance.id,
           theme = theme,
+          animationsEnabled = animationsEnabled,
           modifier = modifier,
         ) {
           RenderViewContent(
@@ -1856,6 +1917,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
               )
               WorkspaceLayout(
@@ -1864,6 +1926,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
               )
             }
@@ -1880,6 +1943,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
               )
               WorkspaceLayout(
@@ -1888,6 +1952,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
               )
             }
@@ -2017,6 +2082,7 @@ private object ClientUi {
     title: String,
     selected: Boolean,
     theme: TerminalTheme,
+    animationsEnabled: Boolean,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
   ) {
@@ -2027,7 +2093,8 @@ private object ClientUi {
     )
 
     Column(
-      modifier.animateContentSize(animationSpec = tween(durationMillis = 180)).border(1.dp, borderColor)
+      modifier = modifier.tileAnimation(tileId = id, enabled = animationsEnabled)
+        .animateContentSize(animationSpec = tween(durationMillis = 180)).border(1.dp, borderColor)
         .padding(horizontal = 10.dp, vertical = 8.dp),
       verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
