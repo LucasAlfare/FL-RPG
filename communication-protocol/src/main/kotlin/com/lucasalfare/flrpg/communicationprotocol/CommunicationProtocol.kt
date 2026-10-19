@@ -965,3 +965,32 @@ class ProtocolValidator {
 
   private fun invalid(message: String) = ValidationResult.Invalid(ValidationError.Protocol(message))
 }
+
+@Serializable
+@JvmInline
+value class ActivityProtocolId(val value: String) {
+  init {
+    require(value.isNotBlank()) { "ActivityProtocolId must not be blank." }
+  }
+}
+
+@Serializable
+data class ProtocolActivity(
+  val activityId: String,
+  val description: String,
+  val status: String,
+  val mode: String,
+  val progress: Double? = null,
+  val remainingTimeSeconds: Long? = null,
+  val elapsedTimeSeconds: Long,
+  val cancellable: Boolean,
+  val cancelChoiceId: String? = null,
+  val cancelShortcut: String? = null
+) {
+  init {
+    require(activityId.isNotBlank()) { "Activity ID must not be blank." }
+    require(description.isNotBlank()) { "Description must not be blank." }
+    require(status.isNotBlank()) { "Status must not be blank." }
+    require(mode.isNotBlank()) { "Mode must not be blank." }
+  }
+}
