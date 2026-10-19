@@ -900,6 +900,13 @@ class ClientPresentationState {
   var activeOperationMessageId: MessageId? by mutableStateOf(null)
 
   private var trackedActivityId: String? = null
+
+  private val activityRecords = mutableStateMapOf<String, ProtocolActivity>()
+  private var activityOrder by mutableStateOf<List<String>>(emptyList())
+
+  val activities: List<ProtocolActivity>
+    get() = activityOrder.mapNotNull { activityRecords[it] }
+
   private val pendingOperationMessageIds = mutableListOf<MessageId>()
 
   val document: PresentationDocument
@@ -964,6 +971,8 @@ class ClientPresentationState {
     activeOperationMessageId = null
     trackedActivityId = null
     pendingOperationMessageIds.clear()
+    activityRecords.clear()
+    activityOrder = emptyList()
   }
 
   fun receive(message: ServerMessage) {
@@ -1019,6 +1028,7 @@ class ClientPresentationState {
 
       is PresentationSnapshot -> {
         serverDocument = message.document
+        syncActivities(serverDocument)
 
         connectionMessage = "CONECTADO · revisão de apresentação ${serverDocument.revision.value}"
       }
@@ -1030,6 +1040,7 @@ class ClientPresentationState {
 
         updatedDocument.onSuccess {
           serverDocument = it
+          syncActivities(it)
 
           connectionMessage = "CONECTADO · revisão de apresentação ${serverDocument.revision.value}"
         }.onFailure {
@@ -1063,6 +1074,18 @@ class ClientPresentationState {
         connectionMessage = "ERRO DE PROTOCOLO · ${message.description}"
       }
     }
+  }
+
+  private fun syncActivities(document: PresentationDocument) {
+    val incoming =
+      document.blocks.map { it.content }.filterIsInstance<BlockContent.Activities>().flatMap { it.activities }
+        .associateBy { it.activityId }
+
+    activityRecords.keys.retainAll(incoming.keys)
+    incoming.forEach { (id, activity) ->
+      if (activityRecords[id] != activity) activityRecords[id] = activity
+    }
+    activityOrder = incoming.keys.toList()
   }
 
   private fun processLifecycleFact(
