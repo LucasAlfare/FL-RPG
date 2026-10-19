@@ -541,7 +541,7 @@ fun Modifier.tileAnimation(
   val scale by transition.animateFloat(
     transitionSpec = {
       spring(
-        dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow
+        dampingRatio = Spring.DampingRatioHighBouncy, stiffness = Spring.StiffnessMedium
       )
     }, label = "tileScale"
   ) { if (it) 1f else 0.85f }
