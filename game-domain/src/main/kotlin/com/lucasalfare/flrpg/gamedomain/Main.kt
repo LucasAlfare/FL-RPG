@@ -185,6 +185,21 @@ fun calculateTravelDuration(distance: DistanceCm, speed: SpeedCmPerSecond): Simu
   return SimulationSeconds(seconds.coerceAtLeast(1L))
 }
 
+fun activityLifecycleFact(
+  name: String, activity: Activity, nucleus: Nucleus
+): GameFact {
+  val arguments = mutableMapOf<String, Any?>(
+    "activityId" to activity.id.value, "characterId" to activity.characterId.value, "type" to activity.type.name
+  )
+  val entityId = WorldEntityId(activity.characterId.value)
+  val locationId = nucleus.world.state.getLocation(entityId)
+  if (locationId != null) {
+    arguments["locationId"] = locationId.value
+    arguments["locationName"] = nucleus.getLocationDisplayName(locationId) ?: locationId.value
+  }
+  return GameFact(name = name, arguments = arguments)
+}
+
 fun SimulationSeconds.toWorldDuration(): WorldDuration = WorldDuration(value)
 
 private const val LEGACY_DISTANCE_UNIT_CM = 100L
@@ -443,11 +458,8 @@ class Nucleus(
 
     transitionActivityStatus(activityId, ActivityStatus.CANCELLED)
 
-    val facts = specificFacts + GameFact(
-      name = "activity_cancelled", arguments = mapOf(
-        "characterId" to characterId.value, "activityId" to activityId.value, "type" to activity.type.name
-      )
-    )
+    val cancelled = _activities[activityId] ?: activity.copy(status = ActivityStatus.CANCELLED)
+    val facts = specificFacts + activityLifecycleFact("activity_cancelled", cancelled, this)
 
     GameActionResult.Success(facts = facts)
   }
@@ -784,7 +796,7 @@ class MoveHandler : GameActionHandler {
       val originDisplayName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
       val destinationDisplayName = nucleus.getLocationDisplayName(destinationId) ?: destinationId.value
 
-      val fact = GameFact(
+      val movedFact = GameFact(
         name = "character_moved", arguments = mapOf(
           "characterId" to action.actorId.value,
           "fromLocationId" to currentLocationId.value,
@@ -795,13 +807,17 @@ class MoveHandler : GameActionHandler {
         )
       )
 
+      val startedFact = activityLifecycleFact("activity_started", activity, nucleus)
+
       GameActionResult.ActivityStarted(
-        activityId = activity.id, facts = listOf(fact)
+        activityId = activity.id, facts = listOf(movedFact, startedFact)
       )
     } catch (ex: Exception) {
       nucleus.transitionActivityStatus(activity.id, ActivityStatus.FAILED)
+      val failed = nucleus.getActivity(activity.id) ?: activity.copy(status = ActivityStatus.FAILED)
       GameActionResult.Rejected(
-        "Failed to start movement: ${ex.message}"
+        reason = "Failed to start movement: ${ex.message}",
+        facts = listOf(activityLifecycleFact("activity_failed", failed, nucleus))
       )
     }
   }
@@ -940,14 +956,21 @@ class GameActionProcessor(
       } else {
         handler.progress(current, nucleus)
       }
-
       facts.addAll(specificFacts)
 
-      if (progress >= 1.0) {
-        val stillActive = nucleus.getActivity(current.id)
-        if (stillActive != null && !stillActive.isTerminal) {
-          nucleus.transitionActivityStatus(current.id, ActivityStatus.COMPLETED)
+      val after = nucleus.getActivity(current.id) ?: continue
+      if (after.isTerminal) {
+        when (after.status) {
+          ActivityStatus.COMPLETED -> facts.add(activityLifecycleFact("activity_completed", after, nucleus))
+          ActivityStatus.INTERRUPTED -> facts.add(activityLifecycleFact("activity_interrupted", after, nucleus))
+          ActivityStatus.FAILED -> facts.add(activityLifecycleFact("activity_failed", after, nucleus))
+          ActivityStatus.CANCELLED -> facts.add(activityLifecycleFact("activity_cancelled", after, nucleus))
+          else -> Unit
         }
+      } else if (progress >= 1.0) {
+        nucleus.transitionActivityStatus(current.id, ActivityStatus.COMPLETED)
+        val completed = nucleus.getActivity(current.id) ?: current.copy(status = ActivityStatus.COMPLETED)
+        facts.add(activityLifecycleFact("activity_completed", completed, nucleus))
       }
     }
 
