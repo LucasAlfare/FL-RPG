@@ -458,6 +458,77 @@ suspend fun distributeFacts(
   )
 }
 
+suspend fun handleGameActionExecution(
+  execution: GameActionExecution,
+  connection: Connection,
+  registry: ConnectionRegistry,
+  actionProcessor: GameActionProcessor,
+  offerRegistry: SessionOfferRegistry,
+  presentationPreparer: InteractionPresentationPreparer,
+  correlationRegistry: OperationCorrelationRegistry,
+  originatingMessageId: MessageId,
+  sessionId: SessionId,
+  characterId: CharacterId,
+  correlationId: CorrelationId
+): ServerMessage {
+  return when (val result = execution.result) {
+    is GameActionResult.Success -> {
+      val protocolFacts = result.facts.map { fact ->
+        ProtocolFact(
+          name = fact.name, arguments = fact.arguments.mapValues { (_, value) -> value?.toString() ?: "" })
+      }
+      ServerCompleted(
+        metadata = MessageMetadata(
+          messageId = MessageId(UUID.randomUUID().toString()),
+          sessionId = sessionId,
+          sequence = Sequence.ZERO,
+          correlationId = correlationId
+        ), facts = protocolFacts
+      ).also {
+        distributeAudiences(
+          audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
+        )
+        presentAvailableInteractions(
+          connection = connection,
+          actionProcessor = actionProcessor,
+          offerRegistry = offerRegistry,
+          preparer = presentationPreparer
+        )
+      }
+    }
+
+    is GameActionResult.ActivityStarted -> {
+      correlationRegistry.register(originatingMessageId, result.activityId, sessionId)
+      ServerAccepted(
+        metadata = MessageMetadata(
+          messageId = MessageId(UUID.randomUUID().toString()),
+          sessionId = sessionId,
+          sequence = Sequence.ZERO,
+          correlationId = correlationId
+        ), detail = "Activity started successfully."
+      )
+    }
+
+    is GameActionResult.Rejected -> {
+      ServerRejected(
+        metadata = MessageMetadata(
+          messageId = MessageId(UUID.randomUUID().toString()),
+          sessionId = sessionId,
+          sequence = Sequence.ZERO,
+          correlationId = correlationId
+        ), reason = result.reason
+      ).also {
+        presentAvailableInteractions(
+          connection = connection,
+          actionProcessor = actionProcessor,
+          offerRegistry = offerRegistry,
+          preparer = presentationPreparer
+        )
+      }
+    }
+  }
+}
+
 suspend fun advanceTimeAndDistribute(
   ticks: Long, registry: ConnectionRegistry, actionProcessor: GameActionProcessor
 ): List<GameFact> {
@@ -766,58 +837,19 @@ suspend fun handleConnection(
                 )
 
                 val execution = actionProcessor.processWithAudiences(gameAction)
-                when (val result = execution.result) {
-                  is GameActionResult.Success -> {
-                    val protocolFacts = result.facts.map { fact ->
-                      ProtocolFact(
-                        name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
-                          value?.toString() ?: ""
-                        })
-                    }
-
-                    ServerCompleted(
-                      metadata = MessageMetadata(
-                        messageId = MessageId(UUID.randomUUID().toString()),
-                        sessionId = currentSessionId,
-                        sequence = Sequence.ZERO,
-                        correlationId = correlationId
-                      ), facts = protocolFacts
-                    ).also {
-                      distributeAudiences(
-                        audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
-                      )
-                      presentAvailableInteractions(
-                        connection = connection,
-                        actionProcessor = actionProcessor,
-                        offerRegistry = offerRegistry,
-                        preparer = presentationPreparer
-                      )
-                    }
-                  }
-
-                  is GameActionResult.ActivityStarted -> {
-                    correlationRegistry.register(message.metadata.messageId, result.activityId, currentSessionId)
-                    ServerAccepted(
-                      metadata = MessageMetadata(
-                        messageId = MessageId(UUID.randomUUID().toString()),
-                        sessionId = currentSessionId,
-                        sequence = Sequence.ZERO,
-                        correlationId = correlationId
-                      ), detail = "Activity started successfully."
-                    )
-                  }
-
-                  is GameActionResult.Rejected -> {
-                    ServerRejected(
-                      metadata = MessageMetadata(
-                        messageId = MessageId(UUID.randomUUID().toString()),
-                        sessionId = currentSessionId,
-                        sequence = Sequence.ZERO,
-                        correlationId = correlationId
-                      ), reason = result.reason
-                    )
-                  }
-                }
+                handleGameActionExecution(
+                  execution = execution,
+                  connection = connection,
+                  registry = registry,
+                  actionProcessor = actionProcessor,
+                  offerRegistry = offerRegistry,
+                  presentationPreparer = presentationPreparer,
+                  correlationRegistry = correlationRegistry,
+                  originatingMessageId = message.metadata.messageId,
+                  sessionId = currentSessionId,
+                  characterId = characterId,
+                  correlationId = correlationId
+                )
               }
             }
 
@@ -902,65 +934,19 @@ suspend fun handleConnection(
                     )
 
                     val execution = actionProcessor.processWithAudiences(gameAction)
-                    when (val result = execution.result) {
-                      is GameActionResult.Success -> {
-                        val protocolFacts = result.facts.map { fact ->
-                          ProtocolFact(
-                            name = fact.name, arguments = fact.arguments.mapValues { (_, value) ->
-                              value?.toString() ?: ""
-                            })
-                        }
-
-                        ServerCompleted(
-                          metadata = MessageMetadata(
-                            messageId = MessageId(UUID.randomUUID().toString()),
-                            sessionId = currentSessionId,
-                            sequence = Sequence.ZERO,
-                            correlationId = correlationId
-                          ), facts = protocolFacts
-                        ).also {
-                          distributeAudiences(
-                            audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
-                          )
-                          presentAvailableInteractions(
-                            connection = connection,
-                            actionProcessor = actionProcessor,
-                            offerRegistry = offerRegistry,
-                            preparer = presentationPreparer
-                          )
-                        }
-                      }
-
-                      is GameActionResult.ActivityStarted -> {
-                        correlationRegistry.register(message.metadata.messageId, result.activityId, currentSessionId)
-                        ServerAccepted(
-                          metadata = MessageMetadata(
-                            messageId = MessageId(UUID.randomUUID().toString()),
-                            sessionId = currentSessionId,
-                            sequence = Sequence.ZERO,
-                            correlationId = correlationId
-                          ), detail = "Activity started successfully."
-                        )
-                      }
-
-                      is GameActionResult.Rejected -> {
-                        ServerRejected(
-                          metadata = MessageMetadata(
-                            messageId = MessageId(UUID.randomUUID().toString()),
-                            sessionId = currentSessionId,
-                            sequence = Sequence.ZERO,
-                            correlationId = correlationId
-                          ), reason = result.reason
-                        ).also {
-                          presentAvailableInteractions(
-                            connection = connection,
-                            actionProcessor = actionProcessor,
-                            offerRegistry = offerRegistry,
-                            preparer = presentationPreparer
-                          )
-                        }
-                      }
-                    }
+                    handleGameActionExecution(
+                      execution = execution,
+                      connection = connection,
+                      registry = registry,
+                      actionProcessor = actionProcessor,
+                      offerRegistry = offerRegistry,
+                      presentationPreparer = presentationPreparer,
+                      correlationRegistry = correlationRegistry,
+                      originatingMessageId = message.metadata.messageId,
+                      sessionId = currentSessionId,
+                      characterId = characterId,
+                      correlationId = correlationId
+                    )
                   }
                 }
               }
