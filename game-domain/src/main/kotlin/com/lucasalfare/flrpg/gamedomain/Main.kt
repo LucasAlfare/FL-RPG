@@ -123,7 +123,7 @@ class Nucleus(
 
   private val _activities = mutableMapOf<ActivityId, Activity>()
 
-  private val _characterActiveActivities = mutableMapOf<CharacterId, ActivityId>()
+  private val _characterActiveActivities = mutableMapOf<CharacterId, MutableSet<ActivityId>>()
 
   private val _movementActivities = mutableMapOf<WorldEntityId, ActivityId>()
 
@@ -152,9 +152,11 @@ class Nucleus(
       world.removeEntity(entityId)
       _movementActivities.remove(entityId)
       _characters.remove(characterId)
-      val activeActivityId = _characterActiveActivities.remove(characterId)
-      if (activeActivityId != null) {
-        _activities.remove(activeActivityId)
+      val activeIds = _characterActiveActivities.remove(characterId)
+      if (activeIds != null) {
+        for (activityId in activeIds) {
+          _activities.remove(activityId)
+        }
       }
     }
   }
@@ -267,17 +269,25 @@ class Nucleus(
       return false
     }
 
-    val existingId = _characterActiveActivities[activity.characterId]
-    if (existingId != null) {
-      val existing = _activities[existingId]
-      if (existing != null && !existing.isTerminal) {
+    if (activity.isTerminal) {
+      _activities[activity.id] = activity
+      return true
+    }
+
+    val activeIds = _characterActiveActivities.getOrPut(activity.characterId) { mutableSetOf() }
+
+    if (activity.mode == ActivityMode.BLOCKING) {
+      val hasBlocking = activeIds.any { id ->
+        val existing = _activities[id]
+        existing != null && !existing.isTerminal && existing.mode == ActivityMode.BLOCKING
+      }
+      if (hasBlocking) {
         return false
       }
     }
+
     _activities[activity.id] = activity
-    if (!activity.isTerminal) {
-      _characterActiveActivities[activity.characterId] = activity.id
-    }
+    activeIds.add(activity.id)
     return true
   }
 
@@ -286,8 +296,21 @@ class Nucleus(
   }
 
   fun getActiveActivityForCharacter(characterId: CharacterId): Activity? = synchronized(stateLock) {
-    val activityId = _characterActiveActivities[characterId] ?: return@synchronized null
-    _activities[activityId]
+    val activeIds = _characterActiveActivities[characterId] ?: return@synchronized null
+    val active = activeIds.mapNotNull { id ->
+      val a = _activities[id]
+      if (a != null && !a.isTerminal) a else null
+    }
+    if (active.isEmpty()) return@synchronized null
+    active.firstOrNull { it.mode == ActivityMode.BLOCKING } ?: active.singleOrNull()
+  }
+
+  fun getActiveActivitiesForCharacter(characterId: CharacterId): List<Activity> = synchronized(stateLock) {
+    val activeIds = _characterActiveActivities[characterId] ?: return@synchronized emptyList()
+    activeIds.mapNotNull { id ->
+      val a = _activities[id]
+      if (a != null && !a.isTerminal) a else null
+    }
   }
 
   fun cancelActivity(characterId: CharacterId, activityId: ActivityId): GameActionResult = synchronized(stateLock) {
@@ -347,8 +370,12 @@ class Nucleus(
     val updated = activity.copy(status = newStatus)
     _activities[activityId] = updated
     if (updated.isTerminal) {
-      if (_characterActiveActivities[activity.characterId] == activityId) {
-        _characterActiveActivities.remove(activity.characterId)
+      val activeIds = _characterActiveActivities[activity.characterId]
+      if (activeIds != null) {
+        activeIds.remove(activityId)
+        if (activeIds.isEmpty()) {
+          _characterActiveActivities.remove(activity.characterId)
+        }
       }
       val entityId = WorldEntityId(activity.characterId.value)
       if (_movementActivities[entityId] == activityId) {
