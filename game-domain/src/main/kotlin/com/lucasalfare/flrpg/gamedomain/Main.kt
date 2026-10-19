@@ -80,6 +80,39 @@ interface ActivityHandler {
   fun cancel(activity: Activity, nucleus: Nucleus): List<GameFact>
 }
 
+class MovementActivityHandler : ActivityHandler {
+  override val activityType: ActivityType = ActivityType.MOVEMENT
+
+  override fun progress(activity: Activity, nucleus: Nucleus): List<GameFact> = emptyList()
+
+  override fun complete(activity: Activity, nucleus: Nucleus): List<GameFact> = emptyList()
+
+  override fun cancel(activity: Activity, nucleus: Nucleus): List<GameFact> {
+    val entityId = WorldEntityId(activity.characterId.value)
+    val movement = nucleus.world.getMovement(entityId)
+    if (movement == null || !movement.isInProgress) {
+      return emptyList()
+    }
+
+    nucleus.world.stopMovement(entityId)
+    val currentLocationId = nucleus.world.state.getLocation(entityId) ?: movement.origin
+    val originName = nucleus.getLocationDisplayName(movement.origin) ?: movement.origin.value
+    val currentName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
+
+    return listOf(
+      GameFact(
+        name = "character_movement_interrupted", arguments = mapOf(
+          "characterId" to activity.characterId.value,
+          "originLocationId" to movement.origin.value,
+          "locationId" to currentLocationId.value,
+          "originLocationName" to originName,
+          "locationName" to currentName
+        )
+      )
+    )
+  }
+}
+
 fun calculateTravelDuration(distance: DistanceCm, speed: SpeedCmPerSecond): SimulationSeconds {
   if (distance.value == 0L) {
     return SimulationSeconds(0L)
@@ -127,10 +160,27 @@ class Nucleus(
 
   private val _movementActivities = mutableMapOf<WorldEntityId, ActivityId>()
 
+  private val _activityHandlers = mutableMapOf<ActivityType, ActivityHandler>(
+    ActivityType.MOVEMENT to MovementActivityHandler()
+  )
+
   val characters: Set<CharacterId>
     get() = synchronized(stateLock) {
       _characters.keys.toSet()
     }
+
+  fun registerActivityHandler(handler: ActivityHandler) {
+    synchronized(stateLock) {
+      require(!_activityHandlers.containsKey(handler.activityType)) {
+        "Activity handler already registered for type: ${handler.activityType}"
+      }
+      _activityHandlers[handler.activityType] = handler
+    }
+  }
+
+  fun getActivityHandler(type: ActivityType): ActivityHandler? = synchronized(stateLock) {
+    _activityHandlers[type]
+  }
 
   fun registerCharacter(character: Character) {
     synchronized(stateLock) {
@@ -324,38 +374,14 @@ class Nucleus(
       return GameActionResult.Rejected("Activity '${activityId.value}' is already terminated.")
     }
 
-    val entityId = WorldEntityId(characterId.value)
-    val facts = mutableListOf<GameFact>()
-
-    if (activity.type == ActivityType.MOVEMENT) {
-      val movement = world.getMovement(entityId)
-      if (movement != null && movement.isInProgress) {
-        world.stopMovement(entityId)
-        val currentLocationId = world.state.getLocation(entityId) ?: movement.origin
-        val originName = getLocationDisplayName(movement.origin) ?: movement.origin.value
-        val currentName = getLocationDisplayName(currentLocationId) ?: currentLocationId.value
-
-        facts.add(
-          GameFact(
-            name = "character_movement_interrupted", arguments = mapOf(
-              "characterId" to characterId.value,
-              "originLocationId" to movement.origin.value,
-              "locationId" to currentLocationId.value,
-              "originLocationName" to originName,
-              "locationName" to currentName
-            )
-          )
-        )
-      }
-    }
+    val handler = _activityHandlers[activity.type]
+    val specificFacts = handler?.cancel(activity, this) ?: emptyList()
 
     transitionActivityStatus(activityId, ActivityStatus.CANCELLED)
 
-    facts.add(
-      GameFact(
-        name = "activity_cancelled", arguments = mapOf(
-          "characterId" to characterId.value, "activityId" to activityId.value, "type" to activity.type.name
-        )
+    val facts = specificFacts + GameFact(
+      name = "activity_cancelled", arguments = mapOf(
+        "characterId" to characterId.value, "activityId" to activityId.value, "type" to activity.type.name
       )
     )
 
