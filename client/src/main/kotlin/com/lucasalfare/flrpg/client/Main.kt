@@ -3,10 +3,13 @@ package com.lucasalfare.flrpg.client
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -1908,6 +1911,10 @@ private object ClientUi {
       focusRequester.requestFocus()
     }
 
+    SideEffect {
+      focusRequester.requestFocus()
+    }
+
     Row(
       Modifier.fillMaxWidth().height(42.dp).border(1.dp, theme.border).padding(horizontal = 10.dp),
       verticalAlignment = Alignment.CenterVertically,
@@ -1978,7 +1985,7 @@ private object ClientUi {
           } else {
             false
           }
-        }.focusable(),
+        },
         singleLine = true,
         textStyle = TextStyle(
           color = theme.foreground,
