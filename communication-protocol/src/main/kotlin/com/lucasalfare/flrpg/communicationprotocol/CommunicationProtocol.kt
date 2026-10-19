@@ -410,6 +410,12 @@ sealed interface BlockContent {
   ) : BlockContent
 
   @Serializable
+  @SerialName("Activities")
+  data class Activities(
+    val activities: List<ProtocolActivity>
+  ) : BlockContent
+
+  @Serializable
   @SerialName("Feed")
   data class Feed(
     val feedId: String, val items: List<FeedItem>, val ordering: FeedOrdering = FeedOrdering.CHRONOLOGICAL
@@ -797,6 +803,30 @@ class StructuralValidator(val limits: ProtocolLimits = ProtocolLimits()) {
           if (item.id.isBlank()) return invalid("Feed item ID cannot be blank.")
           if (item.text.length > limits.maxTextLength) {
             return invalid("Feed item text length exceeds maximum of ${limits.maxTextLength}.")
+          }
+        }
+        ValidationResult.Valid
+      }
+
+      is BlockContent.Activities -> {
+        if (content.activities.size > limits.maxItemsPerList) {
+          return invalid("Activities count exceeds maximum of ${limits.maxItemsPerList}.")
+        }
+        for (activity in content.activities) {
+          if (activity.activityId.isBlank()) return invalid("Activity ID cannot be blank.")
+          if (activity.description.isBlank()) return invalid("Activity description cannot be blank.")
+          if (activity.description.length > limits.maxTextLength) {
+            return invalid("Activity description length exceeds maximum of ${limits.maxTextLength}.")
+          }
+          if (activity.status.isBlank()) return invalid("Activity status cannot be blank.")
+          if (activity.mode.isBlank()) return invalid("Activity mode cannot be blank.")
+          activity.cancelChoiceId?.let {
+            if (it.isBlank()) return invalid("Cancel choice ID cannot be blank.")
+            if (it.length > limits.maxTextLength) return invalid("Cancel choice ID length exceeds maximum.")
+          }
+          activity.cancelShortcut?.let {
+            if (it.isBlank()) return invalid("Cancel shortcut cannot be blank.")
+            if (it.length > limits.maxTextLength) return invalid("Cancel shortcut length exceeds maximum.")
           }
         }
         ValidationResult.Valid

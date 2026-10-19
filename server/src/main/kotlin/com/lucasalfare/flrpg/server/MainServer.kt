@@ -378,17 +378,33 @@ class InteractionPresentationPreparer(
       )
     }
 
-    for (details in activityProgressDetails) {
-      val progressPart = details.progress?.let { p ->
-        val percent = (p * 100).toInt().coerceIn(0, 100)
-        val remainingText = details.remainingTime?.let { " · Remaining: ${it.value}s" } ?: ""
-        " ($percent% complete$remainingText)"
-      } ?: " (Elapsed: ${details.elapsedTime.value}s)"
+    if (activityProgressDetails.isNotEmpty()) {
+      val protocolActivities = activityProgressDetails.map { details ->
+        val cancelOption = offered.firstOrNull { option ->
+          option.interaction.actionName == "cancel_activity" && option.interaction.fixedArguments["activityId"] == details.activityId.value
+        }
+        val matchingChoice = cancelOption?.let { opt -> choices.firstOrNull { it.id == opt.choiceId } }
+
+        ProtocolActivity(
+          activityId = details.activityId.value,
+          description = details.description,
+          status = "RUNNING",
+          mode = details.mode.name,
+          progress = details.progress,
+          remainingTimeSeconds = details.remainingTime?.value,
+          elapsedTimeSeconds = details.elapsedTime.value,
+          cancellable = cancelOption != null,
+          cancelChoiceId = cancelOption?.choiceId,
+          cancelShortcut = matchingChoice?.shortcut
+        )
+      }
+
       contextBlocks.add(
         PresentationBlock(
-          id = BlockId("activity_${details.activityId.value}"), content = BlockContent.Text(
-            text = "⏳ ${details.description}$progressPart", style = TextStyle.HIGHLIGHT
-          ), title = "Current activity", region = PresentationRegion.MAIN
+          id = BlockId("activities"),
+          content = BlockContent.Activities(activities = protocolActivities),
+          title = "Current activities",
+          region = PresentationRegion.MAIN
         )
       )
     }

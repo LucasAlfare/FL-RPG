@@ -1680,6 +1680,29 @@ private object ClientUi {
           )
         }
       }
+
+      is BlockContent.Activities -> {
+        content.activities.forEach { activity ->
+          val progressText = activity.progress?.let { p ->
+            val percent = (p * 100).toInt().coerceIn(0, 100)
+            val remaining = activity.remainingTimeSeconds?.let { " · remaining ${it}s" } ?: ""
+            " ($percent%$remaining)"
+          } ?: " (elapsed ${activity.elapsedTimeSeconds}s)"
+
+          val cancelText = if (activity.cancellable && activity.cancelShortcut != null) {
+            " [${activity.cancelShortcut}] cancel"
+          } else {
+            ""
+          }
+
+          TextBlock(
+            theme,
+            "⏳ ${activity.description}$progressText$cancelText",
+            color = theme.accent,
+            small = true,
+          )
+        }
+      }
     }
   }
 
