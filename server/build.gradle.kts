@@ -15,5 +15,5 @@ dependencies {
 }
 
 application {
-  mainClass.set("com.lucasalfare.flrpg.server.MainKt")
+  mainClass.set("com.lucasalfare.flrpg.server.MainServerKt")
 }
