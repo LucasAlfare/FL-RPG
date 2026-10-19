@@ -447,6 +447,112 @@ class InteractionPresentationPreparer(
     )
   }
 
+  fun preparePromptWithLocation(
+    promptText: String,
+    locationName: String?,
+    movementDestinationName: String?,
+    activityProgressDetails: List<ActivityProgressDetails> = emptyList(),
+    cancelInteractions: List<Interaction> = emptyList(),
+    baseRevision: Revision = Revision.ZERO,
+    existingShortcuts: Map<String, String> = emptyMap()
+  ): PreparedPresentation {
+    val offered = cancelInteractions.map { interaction ->
+      OfferedOption(
+        choiceId = selectionIdFor(interaction), interaction = interaction
+      )
+    }
+
+    val rawChoices = offered.map { option ->
+      Choice(
+        id = option.choiceId,
+        text = option.interaction.label,
+        shortcut = preferredShortcutsByInteractionId[option.interaction.id.value] ?: existingShortcuts[option.choiceId],
+        enabled = true
+      )
+    }
+
+    val choices = shortcutAssigner.assign(rawChoices, existingShortcuts)
+    val newRevision = baseRevision.next()
+
+    val contextBlocks = mutableListOf<PresentationBlock>()
+    val contextText = when {
+      movementDestinationName != null && locationName != null -> "Travelling from $locationName to $movementDestinationName."
+      movementDestinationName != null -> "Travelling to $movementDestinationName."
+      locationName != null -> "You are at $locationName."
+      else -> null
+    }
+
+    if (contextText != null) {
+      contextBlocks.add(
+        PresentationBlock(
+          id = BlockId("current_location"),
+          content = BlockContent.Text(text = contextText, style = TextStyle.NORMAL),
+          title = "Current location",
+          region = PresentationRegion.MAIN
+        )
+      )
+    }
+
+    if (activityProgressDetails.isNotEmpty()) {
+      val protocolActivities = activityProgressDetails.map { details ->
+        val cancelOption = offered.firstOrNull { option ->
+          option.interaction.actionName == "cancel_activity" && option.interaction.fixedArguments["activityId"] == details.activityId.value
+        }
+        val matchingChoice = cancelOption?.let { opt -> choices.firstOrNull { it.id == opt.choiceId } }
+
+        ProtocolActivity(
+          activityId = details.activityId.value,
+          description = details.description,
+          status = "RUNNING",
+          mode = details.mode.name,
+          progress = details.progress,
+          remainingTimeSeconds = details.remainingTime?.value,
+          elapsedTimeSeconds = details.elapsedTime.value,
+          cancellable = cancelOption != null,
+          cancelChoiceId = cancelOption?.choiceId,
+          cancelShortcut = matchingChoice?.shortcut
+        )
+      }
+
+      contextBlocks.add(
+        PresentationBlock(
+          id = BlockId("activities"),
+          content = BlockContent.Activities(activities = protocolActivities),
+          title = "Current activities",
+          region = PresentationRegion.MAIN
+        )
+      )
+    }
+
+    contextBlocks.add(
+      PresentationBlock(
+        id = BlockId("prompt"),
+        content = BlockContent.Text(text = promptText, style = TextStyle.HEADER),
+        title = "Input required",
+        region = PresentationRegion.MAIN
+      )
+    )
+
+    if (choices.isNotEmpty()) {
+      contextBlocks.add(
+        PresentationBlock(
+          id = choicesBlockId,
+          content = BlockContent.Choices(choices = choices),
+          title = "Available actions",
+          region = PresentationRegion.MAIN
+        )
+      )
+    }
+
+    val document = PresentationDocument(
+      revision = newRevision, blocks = contextBlocks
+    )
+
+    return PreparedPresentation(
+      choices = choices, offered = offered, document = document
+    )
+  }
+
   fun preparePrompt(promptText: String, baseRevision: Revision): PresentationDocument {
     val newRevision = baseRevision.next()
     return PresentationDocument(
@@ -622,7 +728,8 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
   actionProcessor: GameActionProcessor,
   offerRegistry: SessionOfferRegistry,
   presentationPreparer: InteractionPresentationPreparer,
-  correlationRegistry: OperationCorrelationRegistry
+  correlationRegistry: OperationCorrelationRegistry,
+  pendingRegistry: SessionPendingRegistry
 ): List<GameFact> {
   val audiences = actionProcessor.advanceTimeWithAudiences(ticks)
 
@@ -642,14 +749,42 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
 
   for (connection in registry.activeConnections()) {
     val characterId = connection.characterId ?: continue
+    val sessionId = connection.sessionId ?: continue
     val hasActiveActivities = actionProcessor.nucleus.getActiveActivitiesForCharacter(characterId).isNotEmpty()
     if (hasActiveActivities || characterId in affectedCharacterIds) {
-      presentAvailableInteractions(
-        connection = connection,
-        actionProcessor = actionProcessor,
-        offerRegistry = offerRegistry,
-        preparer = presentationPreparer
-      )
+      val pending = pendingRegistry.find(sessionId)
+      if (pending != null) {
+        val currentArgName = pending.remainingArguments.firstOrNull()
+        if (currentArgName != null) {
+          val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
+          val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+          val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
+          val cancelInteractions =
+            actionProcessor.availableInteractions(characterId).filter { it.actionName == "cancel_activity" }
+          val offerState = offerRegistry.getOrCreate(sessionId)
+          offerState.updateMutex.withLock {
+            val preparedPrompt = presentationPreparer.preparePromptWithLocation(
+              promptText = "Enter value for $currentArgName:",
+              locationName = locationName,
+              movementDestinationName = movementDestinationName,
+              activityProgressDetails = activityProgressDetails,
+              cancelInteractions = cancelInteractions,
+              baseRevision = offerState.revision,
+              existingShortcuts = offerState.getPersistentShortcuts()
+            )
+            offerState.replaceOffers(preparedPrompt.offered, preparedPrompt.document.revision, preparedPrompt.choices)
+            val snapshot = presentationPreparer.toSnapshot(sessionId, preparedPrompt)
+            connection.send(snapshot)
+          }
+        }
+      } else {
+        presentAvailableInteractions(
+          connection = connection,
+          actionProcessor = actionProcessor,
+          offerRegistry = offerRegistry,
+          preparer = presentationPreparer
+        )
+      }
     }
   }
 
@@ -806,17 +941,28 @@ suspend fun handleConnection(
                 interactionOperationRegistry.set(currentSessionId, message.metadata.messageId)
 
                 val firstArg = pending.remainingArguments.first()
-                offerState.updateMutex.withLock {
-                  val promptDoc =
-                    presentationPreparer.preparePrompt("Enter value for $firstArg:", baseRevision = offerState.revision)
-                  offerState.replaceOffers(emptyList(), promptDoc.revision)
+                val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
+                val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+                val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
+                val cancelInteractions =
+                  actionProcessor.availableInteractions(characterId).filter { it.actionName == "cancel_activity" }
 
-                  val snapshot = PresentationSnapshot(
-                    metadata = MessageMetadata(
-                      messageId = MessageId(UUID.randomUUID().toString()),
-                      sessionId = currentSessionId,
-                      sequence = Sequence.ZERO
-                    ), document = promptDoc
+                offerState.updateMutex.withLock {
+                  val preparedPrompt = presentationPreparer.preparePromptWithLocation(
+                    promptText = "Enter value for $firstArg:",
+                    locationName = locationName,
+                    movementDestinationName = movementDestinationName,
+                    activityProgressDetails = activityProgressDetails,
+                    cancelInteractions = cancelInteractions,
+                    baseRevision = offerState.revision,
+                    existingShortcuts = offerState.getPersistentShortcuts()
+                  )
+                  offerState.replaceOffers(
+                    preparedPrompt.offered, preparedPrompt.document.revision, preparedPrompt.choices
+                  )
+
+                  val snapshot = presentationPreparer.toSnapshot(
+                    sessionId = currentSessionId, prepared = preparedPrompt
                   )
                   connection.send(snapshot)
                 }
@@ -946,19 +1092,31 @@ suspend fun handleConnection(
 
                   if (pending.remainingArguments.isNotEmpty()) {
                     val nextArg = pending.remainingArguments.first()
+                    val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
+                    val movementDestinationName =
+                      actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+                    val activityProgressDetails =
+                      actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
+                    val cancelInteractions =
+                      actionProcessor.availableInteractions(characterId).filter { it.actionName == "cancel_activity" }
+
                     val offerState = offerRegistry.getOrCreate(currentSessionId)
                     offerState.updateMutex.withLock {
-                      val promptDoc = presentationPreparer.preparePrompt(
-                        "Enter value for $nextArg:", baseRevision = offerState.revision
+                      val preparedPrompt = presentationPreparer.preparePromptWithLocation(
+                        promptText = "Enter value for $nextArg:",
+                        locationName = locationName,
+                        movementDestinationName = movementDestinationName,
+                        activityProgressDetails = activityProgressDetails,
+                        cancelInteractions = cancelInteractions,
+                        baseRevision = offerState.revision,
+                        existingShortcuts = offerState.getPersistentShortcuts()
                       )
-                      offerState.replaceOffers(emptyList(), promptDoc.revision)
+                      offerState.replaceOffers(
+                        preparedPrompt.offered, preparedPrompt.document.revision, preparedPrompt.choices
+                      )
 
-                      val snapshot = PresentationSnapshot(
-                        metadata = MessageMetadata(
-                          messageId = MessageId(UUID.randomUUID().toString()),
-                          sessionId = currentSessionId,
-                          sequence = Sequence.ZERO
-                        ), document = promptDoc
+                      val snapshot = presentationPreparer.toSnapshot(
+                        sessionId = currentSessionId, prepared = preparedPrompt
                       )
                       connection.send(snapshot)
                     }
@@ -1189,7 +1347,8 @@ fun Application.module(
         actionProcessor = activeActionProcessor,
         offerRegistry = offerRegistry,
         presentationPreparer = presentationPreparer,
-        correlationRegistry = correlationRegistry
+        correlationRegistry = correlationRegistry,
+        pendingRegistry = pendingRegistry
       )
     }
   }
