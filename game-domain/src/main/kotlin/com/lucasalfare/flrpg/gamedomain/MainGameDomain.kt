@@ -66,7 +66,8 @@ data class Activity(
   val mode: ActivityMode,
   val startTime: SimulationSeconds,
   val duration: SimulationSeconds,
-  val status: ActivityStatus = ActivityStatus.RUNNING
+  val status: ActivityStatus = ActivityStatus.RUNNING,
+  val cancellable: Boolean = true
 ) {
   init {
     if (status == ActivityStatus.RUNNING && !duration.isUnknown) {
@@ -96,6 +97,7 @@ interface ActivityHandler {
   fun progress(activity: Activity, nucleus: Nucleus): List<GameFact>
   fun complete(activity: Activity, nucleus: Nucleus): List<GameFact>
   fun cancel(activity: Activity, nucleus: Nucleus): List<GameFact>
+  fun isCancellable(activity: Activity, nucleus: Nucleus): Boolean = true
 }
 
 class MovementActivityHandler : ActivityHandler {
