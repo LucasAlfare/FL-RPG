@@ -253,6 +253,8 @@ data class PreparedPresentation(
 )
 
 class SessionOfferState {
+  val updateMutex = Mutex()
+
   @Volatile
   var revision: Revision = Revision.ZERO
     private set
@@ -333,6 +335,7 @@ class InteractionPresentationPreparer(
     interactions: List<Interaction>,
     locationName: String?,
     movementDestinationName: String?,
+    activityProgressDetails: List<ActivityProgressDetails> = emptyList(),
     baseRevision: Revision = Revision.ZERO
   ): PreparedPresentation {
     val offered = interactions.map { interaction ->
@@ -371,6 +374,18 @@ class InteractionPresentationPreparer(
           content = BlockContent.Text(text = contextText, style = TextStyle.NORMAL),
           title = "Current location",
           region = PresentationRegion.MAIN
+        )
+      )
+    }
+
+    for (details in activityProgressDetails) {
+      val percent = (details.progress * 100).toInt().coerceIn(0, 100)
+      val remainingText = " · Remaining: ${details.remainingTime.value}s"
+      contextBlocks.add(
+        PresentationBlock(
+          id = BlockId("activity_${details.activityId.value}"), content = BlockContent.Text(
+            text = "⏳ ${details.description} ($percent% complete$remainingText)", style = TextStyle.HIGHLIGHT
+          ), title = "Current activity", region = PresentationRegion.MAIN
         )
       )
     }
@@ -505,6 +520,12 @@ suspend fun handleGameActionExecution(
       distributeAudiences(
         audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
       )
+      presentAvailableInteractions(
+        connection = connection,
+        actionProcessor = actionProcessor,
+        offerRegistry = offerRegistry,
+        preparer = presentationPreparer
+      )
       ServerAccepted(
         metadata = MessageMetadata(
           messageId = MessageId(UUID.randomUUID().toString()),
@@ -567,62 +588,21 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
     }
   }
 
+  val affectedCharacterIds =
+    audiences.filter { isTerminalActivityLifecycleFact(it.fact.name) || it.fact.name.startsWith("character_movement_") }
+      .flatMap { it.characterIds }.toSet()
+
   for (connection in registry.activeConnections()) {
     val characterId = connection.characterId ?: continue
-    val sessionId = connection.sessionId ?: continue
-
-    val progressDetails = actionProcessor.getCharacterMovementProgressDetails(characterId)
-    if (progressDetails != null) {
-      val (description, progress, remaining) = progressDetails
-      val percent = (progress * 100).toInt().coerceIn(0, 100)
-      val remainingText = remaining?.let { " · Restante: ${it.value}s" } ?: ""
-
-      val offerState = offerRegistry.find(sessionId) ?: continue
-      val activityBlockId = BlockId("current_activity")
-
-      val activityBlock = PresentationBlock(
-        id = activityBlockId, content = BlockContent.Text(
-          text = "⏳ $description ($percent% concluído$remainingText)", style = TextStyle.HIGHLIGHT
-        ), title = "Atividade Actual", region = PresentationRegion.MAIN
+    val hasActiveActivities = actionProcessor.nucleus.getActiveActivitiesForCharacter(characterId).isNotEmpty()
+    if (hasActiveActivities || characterId in affectedCharacterIds) {
+      presentAvailableInteractions(
+        connection = connection,
+        actionProcessor = actionProcessor,
+        offerRegistry = offerRegistry,
+        preparer = presentationPreparer
       )
-
-      val interactions = actionProcessor.availableInteractions(characterId)
-      val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
-      val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
-
-      val prepared = presentationPreparer.prepareWithLocation(
-        interactions = interactions,
-        locationName = locationName,
-        movementDestinationName = movementDestinationName,
-        baseRevision = offerState.revision
-      )
-
-      val updatedBlocks = prepared.document.blocks + activityBlock
-      val finalDoc = prepared.document.copy(blocks = updatedBlocks)
-
-      offerState.replaceOffers(prepared.offered, finalDoc.revision)
-
-      val snapshot = PresentationSnapshot(
-        metadata = MessageMetadata(
-          messageId = MessageId(UUID.randomUUID().toString()), sessionId = sessionId, sequence = Sequence.ZERO
-        ), document = finalDoc
-      )
-      connection.send(snapshot)
     }
-  }
-
-  val affectedCharacterIds = audiences.filter {
-    it.fact.name == "character_movement_completed" || it.fact.name == "character_movement_interrupted"
-  }.flatMap { it.characterIds }.toSet()
-
-  for (characterId in affectedCharacterIds) {
-    val connection = registry.findByCharacterId(characterId) ?: continue
-    presentAvailableInteractions(
-      connection = connection,
-      actionProcessor = actionProcessor,
-      offerRegistry = offerRegistry,
-      preparer = presentationPreparer
-    )
   }
 
   return audiences.map { it.fact }
@@ -640,19 +620,23 @@ suspend fun presentAvailableInteractions(
   val interactions = actionProcessor.availableInteractions(characterId)
   val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
   val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+  val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
 
   val offerState = offerRegistry.getOrCreate(sessionId)
-  val prepared = preparer.prepareWithLocation(
-    interactions = interactions,
-    locationName = locationName,
-    movementDestinationName = movementDestinationName,
-    baseRevision = offerState.revision
-  )
+  offerState.updateMutex.withLock {
+    val prepared = preparer.prepareWithLocation(
+      interactions = interactions,
+      locationName = locationName,
+      movementDestinationName = movementDestinationName,
+      activityProgressDetails = activityProgressDetails,
+      baseRevision = offerState.revision
+    )
 
-  offerState.replaceOffers(prepared.offered, prepared.document.revision)
+    offerState.replaceOffers(prepared.offered, prepared.document.revision)
 
-  val snapshot = preparer.toSnapshot(sessionId, prepared)
-  connection.send(snapshot)
+    val snapshot = preparer.toSnapshot(sessionId, prepared)
+    connection.send(snapshot)
+  }
 }
 
 suspend fun handleConnection(
@@ -772,18 +756,20 @@ suspend fun handleConnection(
                 interactionOperationRegistry.set(currentSessionId, message.metadata.messageId)
 
                 val firstArg = pending.remainingArguments.first()
-                val promptDoc =
-                  presentationPreparer.preparePrompt("Enter value for $firstArg:", baseRevision = offerState.revision)
-                offerState.replaceOffers(emptyList(), promptDoc.revision)
+                offerState.updateMutex.withLock {
+                  val promptDoc =
+                    presentationPreparer.preparePrompt("Enter value for $firstArg:", baseRevision = offerState.revision)
+                  offerState.replaceOffers(emptyList(), promptDoc.revision)
 
-                val snapshot = PresentationSnapshot(
-                  metadata = MessageMetadata(
-                    messageId = MessageId(UUID.randomUUID().toString()),
-                    sessionId = currentSessionId,
-                    sequence = Sequence.ZERO
-                  ), document = promptDoc
-                )
-                connection.send(snapshot)
+                  val snapshot = PresentationSnapshot(
+                    metadata = MessageMetadata(
+                      messageId = MessageId(UUID.randomUUID().toString()),
+                      sessionId = currentSessionId,
+                      sequence = Sequence.ZERO
+                    ), document = promptDoc
+                  )
+                  connection.send(snapshot)
+                }
 
                 ServerAccepted(
                   metadata = MessageMetadata(
@@ -798,19 +784,23 @@ suspend fun handleConnection(
               interaction.isMenu -> {
                 val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
                 val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
+                val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
 
-                val preparedMenu = presentationPreparer.prepareWithLocation(
-                  interactions = interaction.children,
-                  locationName = locationName,
-                  movementDestinationName = movementDestinationName,
-                  baseRevision = offerState.revision
-                )
-                offerState.replaceOffers(preparedMenu.offered, preparedMenu.document.revision)
+                offerState.updateMutex.withLock {
+                  val preparedMenu = presentationPreparer.prepareWithLocation(
+                    interactions = interaction.children,
+                    locationName = locationName,
+                    movementDestinationName = movementDestinationName,
+                    activityProgressDetails = activityProgressDetails,
+                    baseRevision = offerState.revision
+                  )
+                  offerState.replaceOffers(preparedMenu.offered, preparedMenu.document.revision)
 
-                val menuSnapshot = presentationPreparer.toSnapshot(
-                  sessionId = currentSessionId, prepared = preparedMenu
-                )
-                connection.send(menuSnapshot)
+                  val menuSnapshot = presentationPreparer.toSnapshot(
+                    sessionId = currentSessionId, prepared = preparedMenu
+                  )
+                  connection.send(menuSnapshot)
+                }
 
                 ServerAccepted(
                   metadata = MessageMetadata(
@@ -905,19 +895,21 @@ suspend fun handleConnection(
                   if (pending.remainingArguments.isNotEmpty()) {
                     val nextArg = pending.remainingArguments.first()
                     val offerState = offerRegistry.getOrCreate(currentSessionId)
-                    val promptDoc = presentationPreparer.preparePrompt(
-                      "Enter value for $nextArg:", baseRevision = offerState.revision
-                    )
-                    offerState.replaceOffers(emptyList(), promptDoc.revision)
+                    offerState.updateMutex.withLock {
+                      val promptDoc = presentationPreparer.preparePrompt(
+                        "Enter value for $nextArg:", baseRevision = offerState.revision
+                      )
+                      offerState.replaceOffers(emptyList(), promptDoc.revision)
 
-                    val snapshot = PresentationSnapshot(
-                      metadata = MessageMetadata(
-                        messageId = MessageId(UUID.randomUUID().toString()),
-                        sessionId = currentSessionId,
-                        sequence = Sequence.ZERO
-                      ), document = promptDoc
-                    )
-                    connection.send(snapshot)
+                      val snapshot = PresentationSnapshot(
+                        metadata = MessageMetadata(
+                          messageId = MessageId(UUID.randomUUID().toString()),
+                          sessionId = currentSessionId,
+                          sequence = Sequence.ZERO
+                        ), document = promptDoc
+                      )
+                      connection.send(snapshot)
+                    }
 
                     ServerAccepted(
                       metadata = MessageMetadata(
