@@ -3,6 +3,7 @@
 package com.lucasalfare.flrpg.gamedomain
 
 import com.lucasalfare.flworld.*
+import java.util.*
 
 @JvmInline
 value class CharacterId(val value: String)
@@ -60,6 +61,14 @@ data class Activity(
   val duration: SimulationSeconds,
   val status: ActivityStatus = ActivityStatus.RUNNING
 ) {
+  init {
+    if (status == ActivityStatus.RUNNING) {
+      require(duration.value > 0L) {
+        "Timed activities must have strictly positive duration."
+      }
+    }
+  }
+
   val isTerminal: Boolean
     get() = status != ActivityStatus.RUNNING
 }
@@ -254,6 +263,10 @@ class Nucleus(
   }
 
   private fun registerActivityLocked(activity: Activity): Boolean {
+    if (_activities.containsKey(activity.id)) {
+      return false
+    }
+
     val existingId = _characterActiveActivities[activity.characterId]
     if (existingId != null) {
       val existing = _activities[existingId]
@@ -632,7 +645,7 @@ class MoveHandler : GameActionHandler {
     val currentSimulationTime = SimulationSeconds(nucleus.world.clock.currentInstant.value)
 
     val activity = Activity(
-      id = ActivityId("activity_move_${action.actorId.value}_${currentSimulationTime.value}"),
+      id = ActivityId(UUID.randomUUID().toString()),
       characterId = action.actorId,
       type = ActivityType.MOVEMENT,
       description = "Moving to ${nucleus.getLocationDisplayName(destinationId) ?: destinationId.value}",
