@@ -553,6 +553,7 @@ class Nucleus(
   fun getActivityProgress(activityId: ActivityId, currentSimulationTime: SimulationSeconds): Double =
     synchronized(stateLock) {
       val activity = getActivity(activityId) ?: return 0.0
+      if (activity.duration.isUnknown) return 0.0
       if (activity.duration.value == 0L) return 1.0
       val elapsed = currentSimulationTime.value - activity.startTime.value
       if (elapsed <= 0L) return 0.0
@@ -1002,6 +1003,14 @@ class GameActionProcessor(
     for (activity in activeActivities) {
       val current = nucleus.getActivity(activity.id) ?: continue
       if (current.isTerminal) continue
+
+      if (current.duration.isUnknown) {
+        val handler = nucleus.getActivityHandler(current.type)
+        if (handler != null) {
+          facts.addAll(handler.progress(current, nucleus))
+        }
+        continue
+      }
 
       val handler = nucleus.getActivityHandler(current.type) ?: continue
       val progress = nucleus.getActivityProgress(current.id, currentSimulationTime)
