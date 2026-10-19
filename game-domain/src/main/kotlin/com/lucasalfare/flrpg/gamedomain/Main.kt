@@ -73,6 +73,16 @@ data class Activity(
     get() = status != ActivityStatus.RUNNING
 }
 
+data class ActivityProgressDetails(
+  val activityId: ActivityId,
+  val characterId: CharacterId,
+  val type: ActivityType,
+  val description: String,
+  val mode: ActivityMode,
+  val progress: Double,
+  val remainingTime: SimulationSeconds
+)
+
 interface ActivityHandler {
   val activityType: ActivityType
   fun progress(activity: Activity, nucleus: Nucleus): List<GameFact>
@@ -247,6 +257,35 @@ class Nucleus(
     get() = synchronized(stateLock) {
       _characters.keys.toSet()
     }
+
+  fun getActivityProgressDetails(
+    activityId: ActivityId,
+    currentSimulationTime: SimulationSeconds = SimulationSeconds(world.clock.currentInstant.value)
+  ): ActivityProgressDetails? = synchronized(stateLock) {
+    val activity = _activities[activityId] ?: return null
+    if (activity.isTerminal) return null
+    val progress = getActivityProgress(activityId, currentSimulationTime)
+    val elapsed = (currentSimulationTime.value - activity.startTime.value).coerceAtLeast(0L)
+    val remaining = (activity.duration.value - elapsed).coerceAtLeast(0L)
+    ActivityProgressDetails(
+      activityId = activity.id,
+      characterId = activity.characterId,
+      type = activity.type,
+      description = activity.description,
+      mode = activity.mode,
+      progress = progress,
+      remainingTime = SimulationSeconds(remaining)
+    )
+  }
+
+  fun getActiveActivitiesProgressDetails(
+    characterId: CharacterId,
+    currentSimulationTime: SimulationSeconds = SimulationSeconds(world.clock.currentInstant.value)
+  ): List<ActivityProgressDetails> = synchronized(stateLock) {
+    getActiveActivitiesForCharacter(characterId).mapNotNull { activity ->
+      getActivityProgressDetails(activity.id, currentSimulationTime)
+    }
+  }
 
   fun registerActivityHandler(handler: ActivityHandler) {
     synchronized(stateLock) {
@@ -845,18 +884,11 @@ class GameActionProcessor(
 
   fun getCharacterMovementProgressDetails(characterId: CharacterId): Triple<String, Double, SimulationSeconds?>? =
     synchronized(nucleus.stateLock) {
-      val entityId = WorldEntityId(characterId.value)
-      val movement = nucleus.world.getMovement(entityId) ?: return@synchronized null
-      if (!movement.isInProgress) return@synchronized null
-
-      val activity = nucleus.getActivityForMovement(entityId) ?: return@synchronized null
-      val currentSimulationTime = SimulationSeconds(nucleus.world.clock.currentInstant.value)
-      val progress = nucleus.getActivityProgress(activity.id, currentSimulationTime)
-
-      val remainingTicks =
-        (activity.duration.value - (currentSimulationTime.value - activity.startTime.value)).coerceAtLeast(0L)
-
-      Triple(activity.description, progress, SimulationSeconds(remainingTicks))
+      val movementActivity =
+        nucleus.getActiveActivitiesForCharacter(characterId).firstOrNull { it.type == ActivityType.MOVEMENT }
+          ?: return@synchronized null
+      val details = nucleus.getActivityProgressDetails(movementActivity.id) ?: return@synchronized null
+      Triple(details.description, details.progress, details.remainingTime)
     }
 
   fun getCharacterLocationDisplayName(characterId: CharacterId): String? = synchronized(nucleus.stateLock) {
