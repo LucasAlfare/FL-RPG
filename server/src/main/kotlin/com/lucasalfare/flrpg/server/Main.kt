@@ -24,6 +24,9 @@ private val DefaultPreferredInteractionShortcuts: Map<String, String> = mapOf(
   "move" to "M"
 )
 
+private fun isTerminalActivityLifecycleFact(name: String): Boolean =
+  name == "activity_completed" || name == "activity_cancelled" || name == "activity_interrupted" || name == "activity_failed"
+
 interface Connection {
   val id: String
   var sessionId: SessionId?
@@ -499,6 +502,9 @@ suspend fun handleGameActionExecution(
 
     is GameActionResult.ActivityStarted -> {
       correlationRegistry.register(originatingMessageId, result.activityId, sessionId)
+      distributeAudiences(
+        audiences = execution.factAudiences, registry = registry, excludeCharacterId = characterId
+      )
       ServerAccepted(
         metadata = MessageMetadata(
           messageId = MessageId(UUID.randomUUID().toString()),
@@ -554,14 +560,10 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
   distributeAudiences(audiences = audiences, registry = registry)
 
   for (audience in audiences) {
-    for (fact in listOf(audience.fact)) {
-      if (fact.name == "character_movement_completed" || fact.name == "character_movement_interrupted" || fact.name == "activity_cancelled") {
-        fact.arguments["characterId"] as? String
-        val activityIdStr = fact.arguments["activityId"] as? String
-        if (activityIdStr != null) {
-          correlationRegistry.removeByActivityId(ActivityId(activityIdStr))
-        }
-      }
+    val fact = audience.fact
+    val activityIdStr = fact.arguments["activityId"] as? String
+    if (activityIdStr != null && isTerminalActivityLifecycleFact(fact.name)) {
+      correlationRegistry.removeByActivityId(ActivityId(activityIdStr))
     }
   }
 
