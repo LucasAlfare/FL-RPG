@@ -1203,7 +1203,7 @@ class ClientPresentationState {
       return
     }
 
-    if (handleClientCommand(command, cancelSink)) {
+    if (handleClientCommand(command, selectionSink, cancelSink)) {
       input = ""
       return
     }
@@ -1277,8 +1277,16 @@ class ClientPresentationState {
 
   private fun handleClientCommand(
     command: String,
+    selectionSink: (String) -> Unit,
     cancelSink: (MessageId) -> Unit,
   ): Boolean {
+    val parts = command.trim().split(Regex("\\s+"), limit = 2)
+
+    if (parts[0].equals("CANCEL", ignoreCase = true) || parts[0].equals("CANCELAR", ignoreCase = true)) {
+      cancelActivity(parts.getOrNull(1).orEmpty(), selectionSink, cancelSink)
+      return true
+    }
+
     return when (command.uppercase()) {
       "M", "MENU" -> {
         screen = ClientScreen.MENU
@@ -1299,19 +1307,50 @@ class ClientPresentationState {
         }
       }
 
-      "CANCEL", "CANCELAR" -> {
+      else -> false
+    }
+  }
+
+  private fun cancelActivity(
+    reference: String,
+    selectionSink: (String) -> Unit,
+    cancelSink: (MessageId) -> Unit,
+  ) {
+    val options = activities.mapNotNull { activity ->
+      activity.cancelChoiceId?.takeIf { activity.cancellable }?.let { activity to it }
+    }
+    val requested = reference.trim()
+
+    if (requested.isNotEmpty()) {
+      val choiceId = options.firstOrNull { (activity, _) ->
+        activity.cancelShortcut.equals(requested, ignoreCase = true)
+      }?.second
+
+      if (choiceId != null) {
+        selectionSink(choiceId)
+      } else {
+        connectionMessage = "CANCEL · no cancellable activity with reference '$requested'"
+      }
+      return
+    }
+
+    when {
+      options.size == 1 -> selectionSink(options.single().second)
+
+      options.size > 1 -> {
+        val references = options.mapNotNull { it.first.cancelShortcut }.joinToString(", ")
+        connectionMessage = "CANCEL · multiple activities can be cancelled, use: cancel <ref> ($references)"
+      }
+
+      else -> {
         val targetId = activeOperationMessageId
 
         if (targetId != null) {
           cancelSink(targetId)
         } else {
-          connectionMessage = "NENHUMA ATIVIDADE ATIVA PARA CANCELAR"
+          connectionMessage = "CANCEL · no active activity to cancel"
         }
-
-        true
       }
-
-      else -> false
     }
   }
 
@@ -1517,6 +1556,7 @@ private object ClientUi {
           workspaceEpoch = state.workspaceEpoch,
           theme = theme,
           activeOperationMessageId = state.activeOperationMessageId,
+          activities = state.activities,
           animationsEnabled = state.animationSettings.enabled, // <-- Passando aqui
           modifier = Modifier.weight(1f).fillMaxWidth(),
         )
@@ -1571,6 +1611,7 @@ private object ClientUi {
     workspaceEpoch: Int,
     theme: TerminalTheme,
     activeOperationMessageId: MessageId?,
+    activities: List<ProtocolActivity>,
     animationsEnabled: Boolean,
     modifier: Modifier = Modifier,
   ) {
@@ -1602,6 +1643,7 @@ private object ClientUi {
               workspace = workspace,
               theme = theme,
               activeOperationMessageId = activeOperationMessageId,
+              activities = activities,
             )
           }
         }
@@ -1622,6 +1664,7 @@ private object ClientUi {
               workspace = workspace,
               theme = theme,
               activeOperationMessageId = activeOperationMessageId,
+              activities = activities,
             )
           }
         }
@@ -1633,6 +1676,7 @@ private object ClientUi {
             document = document,
             theme = theme,
             activeOperationMessageId = activeOperationMessageId,
+            activities = activities,
             animationsEnabled = animationsEnabled,
             modifier = Modifier.fillMaxSize(),
           )
@@ -1736,6 +1780,7 @@ private object ClientUi {
     workspace: WorkspaceState,
     theme: TerminalTheme,
     activeOperationMessageId: MessageId?,
+    activities: List<ProtocolActivity>,
   ) {
     when (viewType) {
       TileViewType.WORLD -> {
@@ -1968,16 +2013,25 @@ private object ClientUi {
         ) {
           TextBlock(theme, "Activity", color = theme.accent, heading = true)
 
+          val currentActivities = activities
+          if (currentActivities.isEmpty()) {
+            TextBlock(
+              theme,
+              "No active activities.",
+              color = theme.muted,
+              small = true,
+            )
+          } else {
+            currentActivities.forEach { activity ->
+              ActivityEntry(activity, theme)
+            }
+          }
+
           val activeId = activeOperationMessageId
           if (activeId != null) {
             TextBlock(
               theme,
               "Active operation message id: ${activeId.value}",
-            )
-          } else {
-            TextBlock(
-              theme,
-              "No active operation.",
               color = theme.muted,
               small = true,
             )
@@ -1994,6 +2048,7 @@ private object ClientUi {
     document: PresentationDocument,
     theme: TerminalTheme,
     activeOperationMessageId: MessageId?,
+    activities: List<ProtocolActivity>,
     animationsEnabled: Boolean,
     modifier: Modifier = Modifier,
   ) {
@@ -2014,6 +2069,7 @@ private object ClientUi {
             workspace = workspace,
             theme = theme,
             activeOperationMessageId = activeOperationMessageId,
+            activities = activities,
           )
         }
       }
@@ -2031,6 +2087,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                activities = activities,
                 animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
               )
@@ -2040,6 +2097,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                activities = activities,
                 animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
               )
@@ -2057,6 +2115,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                activities = activities,
                 animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
               )
@@ -2066,6 +2125,7 @@ private object ClientUi {
                 document = document,
                 theme = theme,
                 activeOperationMessageId = activeOperationMessageId,
+                activities = activities,
                 animationsEnabled = animationsEnabled,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
               )
@@ -2255,6 +2315,35 @@ private object ClientUi {
       },
       lineHeight = if (small) 17.sp else 22.sp,
     )
+  }
+
+  @Composable
+  private fun ActivityEntry(
+    activity: ProtocolActivity,
+    theme: TerminalTheme,
+  ) {
+    Column(
+      Modifier.fillMaxWidth(),
+      verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+      TextBlock(theme, activity.description, color = theme.accent)
+      TextBlock(theme, activity.detailLine(), small = true)
+      activity.cancelLine()?.let { TextBlock(theme, it, color = theme.muted, small = true) }
+    }
+  }
+
+  private fun ProtocolActivity.detailLine(): String = buildList {
+    add(status.lowercase().replaceFirstChar { it.uppercase() })
+    if (mode == "BLOCKING") add("blocking")
+    add("elapsed ${elapsedTimeSeconds}s")
+    progress?.let { add("${(it * 100).toInt().coerceIn(0, 100)}%") }
+    remainingTimeSeconds?.let { add("${it}s left") }
+  }.joinToString(" · ")
+
+  private fun ProtocolActivity.cancelLine(): String? = when {
+    !cancellable -> null
+    cancelShortcut != null -> "Cancellable · ref [$cancelShortcut]"
+    else -> "Cancellable"
   }
 
   private fun colorFor(
