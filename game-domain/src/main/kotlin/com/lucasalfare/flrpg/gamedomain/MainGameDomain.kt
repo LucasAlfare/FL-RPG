@@ -684,12 +684,23 @@ class DefaultInteractionProvider : InteractionProvider {
       )
     }
 
+    val cancelInteractions =
+      nucleus.getActiveActivitiesForCharacter(characterId).filter { nucleus.canCancelActivity(characterId, it.id) }
+        .map { activity ->
+          Interaction(
+            id = InteractionId("cancel_activity_${activity.id.value}"),
+            label = "Cancel: ${activity.description}",
+            actionName = "cancel_activity",
+            fixedArguments = mapOf("activityId" to activity.id.value)
+          )
+        }
+
     if (nucleus.hasBlockingActivity(characterId)) {
-      return emptyList()
+      return cancelInteractions
     }
 
     val entityId = WorldEntityId(characterId.value)
-    val currentLocationId = nucleus.world.state.getLocation(entityId) ?: return emptyList()
+    val currentLocationId = nucleus.world.state.getLocation(entityId) ?: return cancelInteractions
 
     val destinationInteractions =
       nucleus.world.graph.getOutgoingConnections(currentLocationId).distinctBy { it.to }.map { connection ->
@@ -704,14 +715,14 @@ class DefaultInteractionProvider : InteractionProvider {
       }
 
     if (destinationInteractions.isEmpty()) {
-      return emptyList()
+      return cancelInteractions
     }
 
-    return listOf(
-      Interaction(
-        id = InteractionId("move"), label = "Move to a location", children = destinationInteractions
-      )
+    val moveInteraction = Interaction(
+      id = InteractionId("move"), label = "Move to a location", children = destinationInteractions
     )
+
+    return cancelInteractions + moveInteraction
   }
 }
 
