@@ -245,6 +245,8 @@ class Nucleus(
 
   private val _activities = mutableMapOf<ActivityId, Activity>()
 
+  private val _terminalActivitiesHistory = ArrayDeque<Activity>()
+
   private val _characterActiveActivities = mutableMapOf<CharacterId, MutableSet<ActivityId>>()
 
   private val _movementActivities = mutableMapOf<WorldEntityId, ActivityId>()
@@ -429,7 +431,7 @@ class Nucleus(
 
   fun getActivityForMovement(entityId: WorldEntityId): Activity? = synchronized(stateLock) {
     val activityId = _movementActivities[entityId] ?: return@synchronized null
-    _activities[activityId]
+    getActivity(activityId)
   }
 
   fun registerActivity(activity: Activity): Boolean = synchronized(stateLock) {
@@ -437,12 +439,12 @@ class Nucleus(
   }
 
   private fun registerActivityLocked(activity: Activity): Boolean {
-    if (_activities.containsKey(activity.id)) {
+    if (_activities.containsKey(activity.id) || _terminalActivitiesHistory.any { it.id == activity.id }) {
       return false
     }
 
     if (activity.isTerminal) {
-      _activities[activity.id] = activity
+      addTerminalActivityLocked(activity)
       return true
     }
 
@@ -464,7 +466,7 @@ class Nucleus(
   }
 
   fun getActivity(activityId: ActivityId): Activity? = synchronized(stateLock) {
-    _activities[activityId]
+    _activities[activityId] ?: _terminalActivitiesHistory.firstOrNull { it.id == activityId }
   }
 
   fun getActiveActivityForCharacter(characterId: CharacterId): Activity? = synchronized(stateLock) {
@@ -486,7 +488,7 @@ class Nucleus(
   }
 
   fun cancelActivity(characterId: CharacterId, activityId: ActivityId): GameActionResult = synchronized(stateLock) {
-    val activity = _activities[activityId] ?: return GameActionResult.Rejected("Activity not found.")
+    val activity = getActivity(activityId) ?: return GameActionResult.Rejected("Activity not found.")
 
     if (activity.characterId != characterId) {
       return GameActionResult.Rejected("Character '${characterId.value}' does not own activity '${activityId.value}'.")
@@ -501,7 +503,7 @@ class Nucleus(
 
     transitionActivityStatus(activityId, ActivityStatus.CANCELLED)
 
-    val cancelled = _activities[activityId] ?: activity.copy(status = ActivityStatus.CANCELLED)
+    val cancelled = getActivity(activityId) ?: activity.copy(status = ActivityStatus.CANCELLED)
     val facts = specificFacts + activityLifecycleFact("activity_cancelled", cancelled, this)
 
     GameActionResult.Success(facts = facts)
@@ -513,8 +515,10 @@ class Nucleus(
       return false
     }
     val updated = activity.copy(status = newStatus)
-    _activities[activityId] = updated
     if (updated.isTerminal) {
+      _activities.remove(activityId)
+      addTerminalActivityLocked(updated)
+
       val activeIds = _characterActiveActivities[activity.characterId]
       if (activeIds != null) {
         activeIds.remove(activityId)
@@ -526,13 +530,22 @@ class Nucleus(
       if (_movementActivities[entityId] == activityId) {
         _movementActivities.remove(entityId)
       }
+    } else {
+      _activities[activityId] = updated
     }
     return true
   }
 
+  private fun addTerminalActivityLocked(activity: Activity) {
+    if (_terminalActivitiesHistory.size >= MAX_TERMINAL_ACTIVITIES) {
+      _terminalActivitiesHistory.removeFirst()
+    }
+    _terminalActivitiesHistory.addLast(activity)
+  }
+
   fun getActivityProgress(activityId: ActivityId, currentSimulationTime: SimulationSeconds): Double =
     synchronized(stateLock) {
-      val activity = _activities[activityId] ?: return 0.0
+      val activity = getActivity(activityId) ?: return 0.0
       if (activity.duration.value == 0L) return 1.0
       val elapsed = currentSimulationTime.value - activity.startTime.value
       if (elapsed <= 0L) return 0.0
@@ -553,6 +566,7 @@ class Nucleus(
   companion object {
     const val DEFAULT_DISTANCE: Long = 1L
     const val DEFAULT_SPEED: Long = 1L
+    private const val MAX_TERMINAL_ACTIVITIES = 256
   }
 }
 

@@ -1065,24 +1065,22 @@ suspend fun handleConnection(
       connection.close()
     }
 
+    if (characterId != null && actionProcessor != null) {
+      val activeActivities = actionProcessor.nucleus.getActiveActivitiesForCharacter(characterId)
+      for (activeActivity in activeActivities) {
+        val cancelResult = actionProcessor.nucleus.cancelActivity(characterId, activeActivity.id)
+        if (cancelResult is GameActionResult.Success) {
+          runCatching {
+            distributeFacts(cancelResult.facts, registry, actionProcessor, excludeCharacterId = characterId)
+          }
+        }
+      }
+    }
+
     sessionId?.let {
       offerRegistry.remove(it)
       pendingRegistry.remove(it)
       interactionOperationRegistry.remove(it)
-
-      // Handle session-dependent activities cancellation upon disconnection
-      if (characterId != null && actionProcessor != null) {
-        val activeActivity = actionProcessor.nucleus.getActiveActivityForCharacter(characterId)
-        if (activeActivity != null && !activeActivity.isTerminal) {
-          val cancelResult = actionProcessor.nucleus.cancelActivity(characterId, activeActivity.id)
-          if (cancelResult is GameActionResult.Success) {
-            runCatching {
-              distributeFacts(cancelResult.facts, registry, actionProcessor, excludeCharacterId = characterId)
-            }
-          }
-        }
-      }
-
       correlationRegistry.removeBySessionId(it)
     }
 
