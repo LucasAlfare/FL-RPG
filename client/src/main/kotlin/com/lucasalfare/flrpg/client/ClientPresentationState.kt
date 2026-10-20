@@ -383,6 +383,9 @@ class ClientPresentationState {
   }
 
   private fun findActiveChoice(input: String): Choice? {
+    val selected = workspace.instance(workspace.selectedId) ?: return null
+    if (selected.viewType != TileViewType.WORLD) return null
+
     val activeChoices =
       document.blocks.map { it.content }.filterIsInstance<BlockContent.Choices>().flatMap { it.choices }
         .filter { it.enabled }
