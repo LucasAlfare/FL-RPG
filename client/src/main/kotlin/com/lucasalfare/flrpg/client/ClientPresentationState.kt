@@ -491,6 +491,21 @@ class ClientPresentationState {
         }
       }
 
+      LocalUiCommand.Menu -> {
+        screen = ClientScreen.MENU
+        "UI · menu opened"
+      }
+
+      LocalUiCommand.Presentation -> {
+        screen = ClientScreen.PRESENTATION
+        "UI · presentation view opened"
+      }
+
+      LocalUiCommand.Theme -> {
+        darkThemeEnabled = !darkThemeEnabled
+        "UI · theme toggled"
+      }
+
       is LocalUiCommand.Open -> {
         if (workspace.open(command.viewTextualId)) {
           "UI · ${command.viewTextualId} opened"

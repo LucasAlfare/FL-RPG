@@ -4,6 +4,9 @@ sealed class LocalUiCommand {
   data object Help : LocalUiCommand()
   data object Tiles : LocalUiCommand()
   data object Animations : LocalUiCommand()
+  data object Menu : LocalUiCommand()
+  data object Presentation : LocalUiCommand()
+  data object Theme : LocalUiCommand()
   data class Open(val viewTextualId: String) : LocalUiCommand()
   data class Focus(val id: TileId) : LocalUiCommand()
   data class Close(val id: TileId?) : LocalUiCommand()
@@ -54,6 +57,30 @@ fun parseUiCommand(input: String): UiCommandParseResult {
         UiCommandParseResult.Failure("'ui tiles' does not accept arguments")
       } else {
         UiCommandParseResult.Success(LocalUiCommand.Tiles)
+      }
+    }
+
+    "menu" -> {
+      if (args.isNotEmpty()) {
+        UiCommandParseResult.Failure("'ui menu' does not accept arguments")
+      } else {
+        UiCommandParseResult.Success(LocalUiCommand.Menu)
+      }
+    }
+
+    "presentation" -> {
+      if (args.isNotEmpty()) {
+        UiCommandParseResult.Failure("'ui presentation' does not accept arguments")
+      } else {
+        UiCommandParseResult.Success(LocalUiCommand.Presentation)
+      }
+    }
+
+    "theme" -> {
+      if (args.isNotEmpty()) {
+        UiCommandParseResult.Failure("'ui theme' does not accept arguments")
+      } else {
+        UiCommandParseResult.Success(LocalUiCommand.Theme)
       }
     }
 
