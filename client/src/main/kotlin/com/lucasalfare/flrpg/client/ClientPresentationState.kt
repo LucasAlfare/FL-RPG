@@ -313,22 +313,40 @@ class ClientPresentationState {
       UiCommandParseResult.NotUiCommand -> Unit
     }
 
-    val activeChoice = findActiveChoice(command)
+    if (isMenuOpen) {
+      connectionMessage = "UI · menu is open, only valid ui commands are allowed"
+      input = ""
+      return
+    }
 
-    if (activeChoice != null) {
+    val selectedInstance = workspace.instance(workspace.selectedId)
+    val selectedViewType = selectedInstance?.viewType ?: TileViewType.WORLD
+
+    if (selectedViewType == TileViewType.WORLD) {
+      val activeChoice = findActiveChoice(command)
+      if (activeChoice != null) {
+        rememberCommand(command)
+        selectionSink(activeChoice.id)
+        input = ""
+        return
+      }
+
       rememberCommand(command)
-      selectionSink(activeChoice.id)
+      commandSink(command)
       input = ""
       return
     }
 
-    if (handleClientCommand(command, selectionSink, cancelSink)) {
-      input = ""
-      return
+    if (selectedViewType == TileViewType.ACTIVITY) {
+      val parts = command.split(Regex("\\s+"), limit = 2)
+      if (parts[0].equals("CANCEL", ignoreCase = true) || parts[0].equals("CANCELAR", ignoreCase = true)) {
+        cancelActivity(parts.getOrNull(1).orEmpty(), selectionSink, cancelSink)
+        input = ""
+        return
+      }
     }
 
-    rememberCommand(command)
-    commandSink(command)
+    connectionMessage = "UI · input not recognized in context ${selectedViewType.name.lowercase()}"
     input = ""
   }
 
@@ -394,46 +412,6 @@ class ClientPresentationState {
       it.shortcut.equals(input, ignoreCase = true)
     } ?: activeChoices.firstOrNull {
       it.text.equals(input, ignoreCase = true)
-    }
-  }
-
-  private fun handleClientCommand(
-    command: String,
-    selectionSink: (String) -> Unit,
-    cancelSink: (MessageId) -> Unit,
-  ): Boolean {
-    val parts = command.trim().split(Regex("\\s+"), limit = 2)
-
-    if (parts[0].equals("CANCEL", ignoreCase = true) || parts[0].equals("CANCELAR", ignoreCase = true)) {
-      val selected = workspace.instance(workspace.selectedId)
-      if (selected?.viewType != TileViewType.ACTIVITY) {
-        return false
-      }
-      cancelActivity(parts.getOrNull(1).orEmpty(), selectionSink, cancelSink)
-      return true
-    }
-
-    return when (command.uppercase()) {
-      "M", "MENU" -> {
-        screen = ClientScreen.MENU
-        true
-      }
-
-      "V", "VOLTAR" -> {
-        screen = ClientScreen.PRESENTATION
-        true
-      }
-
-      "T", "TEMA" -> {
-        if (screen == ClientScreen.MENU) {
-          darkThemeEnabled = !darkThemeEnabled
-          true
-        } else {
-          false
-        }
-      }
-
-      else -> false
     }
   }
 

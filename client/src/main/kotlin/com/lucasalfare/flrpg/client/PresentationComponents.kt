@@ -236,21 +236,30 @@ fun RenderViewContent(
 
         TextBlock(
           theme,
-          "Local UI commands start with the token 'ui' (case-insensitive). " + "They never reach the game server. Any other input is treated as a game command " + "or menu shortcut and may be sent to the server.",
+          "Local UI commands start with the token 'ui' (case-insensitive) and are available globally. " + "Free text and world choices are accepted only when the 'world' tile is selected. " + "Activity cancellations are accepted only when the 'activity' tile is selected.",
         )
 
         TextBlock(theme, "Commands", color = theme.accent, heading = true)
 
         TextBlock(theme, "ui help")
-        TextBlock(theme, "  Open or select the help view (this tile).", small = true)
+        TextBlock(theme, "  Open or select the help view.", small = true)
 
         TextBlock(theme, "ui tiles")
         TextBlock(theme, "  Open or select the workspace management view.", small = true)
 
+        TextBlock(theme, "ui menu")
+        TextBlock(theme, "  Open the global menu view.", small = true)
+
+        TextBlock(theme, "ui presentation")
+        TextBlock(theme, "  Return to the presentation view.", small = true)
+
+        TextBlock(theme, "ui theme")
+        TextBlock(theme, "  Toggle between dark and light theme.", small = true)
+
         TextBlock(theme, "ui open <view>")
         TextBlock(
           theme,
-          "  Open a registered view. Single-instance views (world, help, workspace, history, activity) " + "select the existing instance if active, or restore it if minimized.",
+          "  Open a registered view.",
           small = true,
         )
 
@@ -260,14 +269,14 @@ fun RenderViewContent(
         TextBlock(theme, "ui close [id]")
         TextBlock(
           theme,
-          "  Close the given active tile, or the selected tile if id is omitted. " + "The main world tile cannot be closed. Closing a minimized tile removes it permanently.",
+          "  Close the given active tile, or the selected tile if id is omitted.",
           small = true,
         )
 
         TextBlock(theme, "ui minimize [id]")
         TextBlock(
           theme,
-          "  Remove the given active tile (or the selected one) from the layout and keep it minimized. " + "The main world tile cannot be minimized.",
+          "  Minimize the given active tile or the selected one.",
           small = true,
         )
 
@@ -277,7 +286,7 @@ fun RenderViewContent(
         TextBlock(theme, "ui maximize [id]")
         TextBlock(
           theme,
-          "  Maximize the given active tile (or the selected one) to fill the workspace. " + "The original layout tree is preserved.",
+          "  Maximize the given active tile or the selected one.",
           small = true,
         )
 
@@ -287,47 +296,28 @@ fun RenderViewContent(
         TextBlock(theme, "ui swap <id> <other-id>")
         TextBlock(
           theme,
-          "  Swap the positions of two active tiles without changing their identities or content.",
+          "  Swap the positions of two active tiles.",
           small = true,
         )
 
         TextBlock(theme, "Views", color = theme.accent, heading = true)
 
         TextBlock(theme, "world")
-        TextBlock(theme, "  Main presentation document (excludes client history).", small = true)
+        TextBlock(theme, "  Main presentation document (accepts free text and choices).", small = true)
 
         TextBlock(theme, "help")
-        TextBlock(theme, "  This help content (available offline).", small = true)
+        TextBlock(theme, "  This help content.", small = true)
 
         TextBlock(theme, "workspace")
-        TextBlock(theme, "  Lists active and minimized tiles with selection and maximization state.", small = true)
+        TextBlock(theme, "  Lists active and minimized tiles.", small = true)
 
         TextBlock(theme, "history")
-        TextBlock(theme, "  Local recent events feed maintained by the client.", small = true)
+        TextBlock(theme, "  Local recent events feed.", small = true)
 
         TextBlock(theme, "activity")
         TextBlock(
           theme,
-          "  Shows the currently active operation message id when one exists. " + "No progress percentages or estimated states are invented.",
-          small = true,
-        )
-
-        TextBlock(theme, "Selection and layout rules", color = theme.accent, heading = true)
-
-        TextBlock(
-          theme,
-          "There is always one selected active tile. Closing or minimizing the selected tile " + "selects the first remaining active tile in visual order. Maximization is cleared " + "before any structural change or selection change to another tile.",
-        )
-
-        TextBlock(
-          theme,
-          "Compact mode activates when any active tile would be smaller than 280 dp wide or " + "180 dp tall. In that case only the selected tile is shown; the tree and all " + "instances remain intact and the full layout returns when space allows.",
-        )
-
-        TextBlock(
-          theme,
-          "This help view is available offline and is a single-instance view.",
-          color = theme.muted,
+          "  Shows active operations and accepts cancellation commands (`cancel` / `cancelar`).",
           small = true,
         )
       }
