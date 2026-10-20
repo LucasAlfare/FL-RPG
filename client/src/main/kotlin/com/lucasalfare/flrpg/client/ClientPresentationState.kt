@@ -405,6 +405,10 @@ class ClientPresentationState {
     val parts = command.trim().split(Regex("\\s+"), limit = 2)
 
     if (parts[0].equals("CANCEL", ignoreCase = true) || parts[0].equals("CANCELAR", ignoreCase = true)) {
+      val selected = workspace.instance(workspace.selectedId)
+      if (selected?.viewType != TileViewType.ACTIVITY) {
+        return false
+      }
       cancelActivity(parts.getOrNull(1).orEmpty(), selectionSink, cancelSink)
       return true
     }
