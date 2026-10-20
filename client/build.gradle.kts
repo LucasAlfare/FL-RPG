@@ -16,6 +16,6 @@ dependencies {
 
 compose.desktop {
   application {
-    mainClass = "com.lucasalfare.flrpg.client.MainKt"
+    mainClass = "com.lucasalfare.flrpg.client.ClientApplicationKt"
   }
 }
