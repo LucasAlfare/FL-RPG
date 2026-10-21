@@ -318,18 +318,31 @@ class GameDomainTests {
     processor.process(
       GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
     )
-    nucleus.connectLocations("spawn", "town")
+    nucleus.connectLocations("spawn", "town", distance = 10L)
 
     val result = processor.process(
       GameAction("move", actorId, mapOf("targetLocationId" to "town"))
     )
 
-    assertTrue(result is GameActionResult.Success)
-    assertEquals(WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId))
+    assertTrue(
+      result is GameActionResult.ActivityStarted, "Movement should start an activity, but received: $result"
+    )
+
+    val started = result as GameActionResult.ActivityStarted
+
+    assertEquals(
+      listOf("character_moved", "activity_started"), started.facts.map { it.name })
+
+    assertEquals(
+      WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId)
+    )
 
     val movement = nucleus.world.getMovement(entityId)
-    assertEquals(movement?.isInProgress, true)
+
+    assertEquals(movement?.isInProgress, true, "Movement should remain in progress after starting")
     assertEquals(WorldLocationId("town"), movement?.destination)
+
+    assertEquals(ActivityStatus.RUNNING, nucleus.getActivity(started.activityId)?.status)
   }
 
   @Test
@@ -342,20 +355,49 @@ class GameDomainTests {
     processor.process(
       GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
     )
-    nucleus.connectLocations("spawn", "town")
-    processor.process(
+    nucleus.connectLocations("spawn", "town", distance = 10L)
+
+    val result = processor.process(
       GameAction("move", actorId, mapOf("targetLocationId" to "town"))
+    )
+
+    assertTrue(
+      result is GameActionResult.ActivityStarted, "Movement should start an activity, but received: $result"
+    )
+
+    val started = result as GameActionResult.ActivityStarted
+
+    assertEquals(
+      WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId)
     )
 
     val facts = processor.advanceTime(10)
 
-    assertEquals(1, facts.size)
-    val fact = facts.single()
-    assertEquals("character_movement_completed", fact.name)
-    assertEquals("hero", fact.arguments["characterId"])
-    assertEquals("spawn", fact.arguments["originLocationId"])
-    assertEquals("town", fact.arguments["locationId"])
-    assertEquals(WorldLocationId("town"), nucleus.world.state.getLocation(entityId))
+    val movementCompleted = facts.filter {
+      it.name == "character_movement_completed"
+    }
+
+    assertEquals(1, movementCompleted.size)
+    assertEquals("hero", movementCompleted.single().arguments["characterId"])
+    assertEquals("spawn", movementCompleted.single().arguments["originLocationId"])
+    assertEquals("town", movementCompleted.single().arguments["locationId"])
+
+    val activityCompleted = facts.filter {
+      it.name == "activity_completed"
+    }
+
+    assertEquals(1, activityCompleted.size)
+    assertEquals(
+      started.activityId.value, activityCompleted.single().arguments["activityId"]
+    )
+
+    assertEquals(
+      WorldLocationId("town"), nucleus.world.state.getLocation(entityId)
+    )
+
+    assertEquals(
+      ActivityStatus.COMPLETED, nucleus.getActivity(started.activityId)?.status
+    )
   }
 
   @Test
@@ -386,20 +428,50 @@ class GameDomainTests {
     val nucleus = Nucleus(NucleusId("nucleus"))
     val processor = GameActionProcessor(nucleus)
     val actorId = CharacterId("hero")
+    val entityId = WorldEntityId(actorId.value)
 
     processor.process(
       GameAction("enter_world", actorId, mapOf("locationId" to "spawn"))
     )
-    nucleus.connectLocations("spawn", "town")
-    processor.process(
+    nucleus.connectLocations("spawn", "town", distance = 10L)
+
+    val result = processor.process(
       GameAction("move", actorId, mapOf("targetLocationId" to "town"))
     )
 
-    val firstFacts = processor.advanceTime(10)
-    val secondFacts = processor.advanceTime(10)
+    assertTrue(
+      result is GameActionResult.ActivityStarted, "Movement should start an activity, but received: $result"
+    )
 
-    assertEquals(1, firstFacts.count { it.name == "character_movement_completed" })
-    assertEquals(0, secondFacts.count { it.name == "character_movement_completed" })
+    val earlyFacts = processor.advanceTime(9)
+
+    assertEquals(
+      0, earlyFacts.count { it.name == "character_movement_completed" })
+    assertEquals(
+      WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId)
+    )
+    assertTrue(nucleus.world.getMovement(entityId)?.isInProgress == true)
+
+    val completionFacts = processor.advanceTime(1)
+
+    assertEquals(
+      1, completionFacts.count { it.name == "character_movement_completed" })
+
+    val completedFact = completionFacts.single {
+      it.name == "character_movement_completed"
+    }
+
+    assertEquals("hero", completedFact.arguments["characterId"])
+    assertEquals("spawn", completedFact.arguments["originLocationId"])
+    assertEquals("town", completedFact.arguments["locationId"])
+    assertEquals(
+      WorldLocationId("town"), nucleus.world.state.getLocation(entityId)
+    )
+
+    val subsequentFacts = processor.advanceTime(10)
+
+    assertEquals(
+      0, subsequentFacts.count { it.name == "character_movement_completed" })
   }
 
   @Test
