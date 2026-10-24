@@ -95,6 +95,8 @@ class MoveHandler : GameActionHandler {
     return try {
       nucleus.world.startMovement(movement)
 
+      nucleus.explorationSystem.clearLastResult(action.actorId)
+
       val originDisplayName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
       val destinationDisplayName = nucleus.getLocationDisplayName(destinationId) ?: destinationId.value
 

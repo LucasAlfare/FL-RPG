@@ -47,6 +47,13 @@ class GameActionProcessor(
     nucleus.getLocationDisplayName(movement.destination) ?: movement.destination.value
   }
 
+  fun currentExplorationResult(characterId: CharacterId): TransientExplorationResult? =
+    synchronized(nucleus.stateLock) {
+      val entityId = WorldEntityId(characterId.value)
+      val locationId = nucleus.world.state.getLocation(entityId) ?: return@synchronized null
+      nucleus.explorationSystem.lastResultForLocation(characterId, locationId.value)
+    }
+
   fun availableInteractions(characterId: CharacterId): List<Interaction> = synchronized(nucleus.stateLock) {
     interactionProvider.availableInteractions(characterId, nucleus)
   }
