@@ -126,6 +126,8 @@ class ExplorationSystem(private val catalog: ExplorationCatalog) {
     }
   }
 
+  fun areaByLocationId(locationId: String): ExplorationArea? = catalog.areaByLocationId(locationId)
+
   private class CharacterState {
     val observedAreas = mutableSetOf<ExplorationAreaId>()
     val discoveredElements = mutableSetOf<ExplorationElementId>()

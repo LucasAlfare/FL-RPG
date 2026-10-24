@@ -101,14 +101,34 @@ class DefaultInteractionProvider : InteractionProvider {
         )
       }
 
+    val explorationInteractions = buildExplorationInteractions(characterId, nucleus, currentLocationId.value)
+
+    val result = cancelInteractions + explorationInteractions
     if (destinationInteractions.isEmpty()) {
-      return cancelInteractions
+      return result
     }
 
     val moveInteraction = Interaction(
       id = InteractionId("move"), label = "Move to a location", children = destinationInteractions
     )
+    return result + moveInteraction
+  }
 
-    return cancelInteractions + moveInteraction
+  private fun buildExplorationInteractions(
+    characterId: CharacterId, nucleus: Nucleus, locationId: String
+  ): List<Interaction> {
+    val area = nucleus.explorationSystem.areaByLocationId(locationId) ?: return emptyList()
+    val lookAround = Interaction(
+      id = InteractionId("look_around"), label = "Look around", actionName = "look_around"
+    )
+    val examineInteractions = nucleus.explorationSystem.discoveredElements(characterId, area.id).map { element ->
+      Interaction(
+        id = InteractionId("examine_${element.id.value}"),
+        label = "Examine: ${element.name}",
+        actionName = "examine",
+        fixedArguments = mapOf("elementId" to element.id.value)
+      )
+    }
+    return listOf(lookAround) + examineInteractions
   }
 }
