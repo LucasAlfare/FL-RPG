@@ -57,7 +57,9 @@ class ClientTests {
     state.receive(snapshot(document))
 
     assertEquals(3L, state.document.revision.value)
-    assertEquals(listOf(BlockId("a"), BlockId("b")), state.document.blocks.map { it.id })
+    assertEquals(
+      listOf(BlockId("a"), BlockId("b")),
+      state.document.blocks.filter { it.id != BlockId("client_recent_history") }.map { it.id })
   }
 
   @Test
@@ -144,10 +146,18 @@ class ClientTests {
     val received = mutableListOf<String>()
 
     state.updateInput("")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
 
     state.updateInput("   ")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
 
     assertTrue(received.isEmpty())
   }
@@ -158,11 +168,23 @@ class ClientTests {
     val received = mutableListOf<String>()
 
     state.updateInput("look")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
     state.updateInput("north")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
     state.updateInput("south")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
 
     assertEquals(listOf("look", "north", "south"), received)
     assertEquals("", state.input)
@@ -197,23 +219,39 @@ class ClientTests {
     assertFalse(state.isMenuOpen)
 
     state.updateInput("M")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
     assertTrue(state.isMenuOpen)
     assertTrue(received.isEmpty())
 
     val themeBeforeToggle = state.darkThemeEnabled
     state.updateInput("T")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
     assertNotEquals(themeBeforeToggle, state.darkThemeEnabled)
     assertTrue(received.isEmpty())
 
     state.updateInput("V")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
     assertFalse(state.isMenuOpen)
     assertTrue(received.isEmpty())
 
     state.updateInput("T")
-    state.submitCommand { received.add(it) }
+    state.submitCommand(
+      selectionSink = {},
+      commandSink = { received.add(it) },
+      cancelSink = {},
+    )
     assertEquals(listOf("T"), received)
   }
 }

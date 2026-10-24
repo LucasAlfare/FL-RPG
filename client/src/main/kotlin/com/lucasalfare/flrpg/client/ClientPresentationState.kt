@@ -269,6 +269,10 @@ class ClientPresentationState {
 
     val to = args["toLocationName"] ?: args["toLocationId"] ?: "an unknown destination"
 
+    val areaName = args["areaName"] ?: "an unknown area"
+    val elementName = args["elementName"] ?: "an unknown element"
+    val sourceElementName = args["sourceElementName"]
+
     return when (name) {
       "character_entered" -> "You entered the world at $location."
 
@@ -277,6 +281,18 @@ class ClientPresentationState {
       "character_movement_completed" -> "You arrived at $location (from $origin)."
 
       "character_movement_interrupted" -> "Your movement was interrupted; you are at $location."
+
+      "exploration_area_observed" -> "You looked around $areaName."
+
+      "exploration_element_examined" -> "You examined $elementName."
+
+      "exploration_element_discovered" -> {
+        if (sourceElementName != null) {
+          "You discovered $elementName while examining $sourceElementName."
+        } else {
+          "You discovered $elementName."
+        }
+      }
 
       else -> name
     }

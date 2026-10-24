@@ -45,7 +45,7 @@ class MovementActivityHandler : ActivityHandler {
     val movement = nucleus.world.getMovement(entityId)
     val currentLocation = nucleus.world.state.getLocation(entityId)
 
-    if (movement != null && currentLocation == movement.destination) {
+    if (movement != null && (currentLocation == movement.destination || !movement.isInProgress)) {
       val originName = nucleus.getLocationDisplayName(movement.origin) ?: movement.origin.value
       val destinationName = nucleus.getLocationDisplayName(movement.destination) ?: movement.destination.value
 
@@ -62,24 +62,27 @@ class MovementActivityHandler : ActivityHandler {
       )
     }
 
-    val currentLocationId = currentLocation ?: movement?.origin ?: return emptyList()
-    val origin = movement?.origin ?: currentLocationId
-    val originName = nucleus.getLocationDisplayName(origin) ?: origin.value
-    val currentName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
+    if (movement != null) {
+      val currentLocationId = currentLocation ?: movement.origin
+      val originName = nucleus.getLocationDisplayName(movement.origin) ?: movement.origin.value
+      val currentName = nucleus.getLocationDisplayName(currentLocationId) ?: currentLocationId.value
 
-    nucleus.transitionActivityStatus(activity.id, ActivityStatus.INTERRUPTED)
+      nucleus.transitionActivityStatus(activity.id, ActivityStatus.INTERRUPTED)
 
-    return listOf(
-      GameFact(
-        name = "character_movement_interrupted", arguments = mapOf(
-          "characterId" to activity.characterId.value,
-          "originLocationId" to origin.value,
-          "locationId" to currentLocationId.value,
-          "originLocationName" to originName,
-          "locationName" to currentName
+      return listOf(
+        GameFact(
+          name = "character_movement_interrupted", arguments = mapOf(
+            "characterId" to activity.characterId.value,
+            "originLocationId" to movement.origin.value,
+            "locationId" to currentLocationId.value,
+            "originLocationName" to originName,
+            "locationName" to currentName
+          )
         )
       )
-    )
+    }
+
+    return emptyList()
   }
 
   override fun cancel(activity: Activity, nucleus: Nucleus): List<GameFact> {
