@@ -8,4 +8,6 @@ include(
   ":server",
   ":communication-protocol",
   ":game-domain",
+
+  ":communication-protocol-refactor",
 )
