@@ -4,9 +4,13 @@ import com.lucasalfare.flworld.*
 import java.util.*
 
 class Nucleus(
-  val id: NucleusId, val world: World = World(WorldId(id.value))
+  val id: NucleusId,
+  val world: World = World(WorldId(id.value)),
+  explorationCatalog: ExplorationCatalog = ExplorationCatalog.EMPTY
 ) {
   internal val stateLock = Any()
+
+  val explorationSystem = ExplorationSystem(explorationCatalog)
 
   private val _characters = mutableMapOf<CharacterId, Character>()
 
@@ -125,6 +129,7 @@ class Nucleus(
           _activities.remove(activityId)
         }
       }
+      explorationSystem.removeCharacter(characterId)
     }
   }
 
