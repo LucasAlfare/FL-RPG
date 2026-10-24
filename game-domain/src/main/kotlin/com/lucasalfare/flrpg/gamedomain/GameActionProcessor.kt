@@ -20,7 +20,7 @@ class GameActionProcessor(
 
   companion object {
     fun defaultHandlers(): List<GameActionHandler> = listOf(
-      EnterWorldHandler(), MoveHandler(), CancelActivityHandler()
+      EnterWorldHandler(), MoveHandler(), CancelActivityHandler(), LookAroundHandler(), ExamineHandler()
     )
   }
 
