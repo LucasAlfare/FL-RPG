@@ -8,6 +8,26 @@ The long-term direction is a persistent multiplayer world organized around **rea
 
 That is the game's direction, not a claim that all of these features are complete. The repository currently contains a functional early vertical slice of the supporting infrastructure and a small development scenario used to validate the basic interaction loop.
 
+## Why FL-RPG exists
+
+FL-RPG did not begin with a complete design document or a carefully planned universe. It began with a personal question: **what kind of MMORPG would I genuinely want to play now?**
+
+Games such as Tibia, RuneScape, and Perfect World shaped my experience with MMORPGs. I spent a lot of time playing them, developing my characters, and enjoying the sense of progression they offered. But over time, I started feeling that the experiences I wanted were becoming harder to find in those games. RuneScape could feel increasingly complicated to keep up with, with too many things to buy or manage; Tibia could feel constrained by dominant guilds and the politics surrounding them; and in Perfect World, cash-driven progression could make it difficult to advance through playing alone. These games still mattered to me, but they no longer fully matched what I was looking for.
+
+That made me ask a more fundamental question: **what actually makes me want to return to an MMORPG?** When I thought about the activities I enjoyed most, I kept coming back to collecting things, building up a character, and gradually discovering more of what a game had to offer. The idea that stood out was not simply becoming stronger than other players. It was having a world full of things worth finding, pursuing, recording, and collecting.
+
+From there, another question followed: what would make me want to keep playing and developing my own game? The answer that gradually emerged was **exploration and collection, supported by a satisfying sense of progression**. The design was not mapped out in advance. It took shape little by little, as one question led to another and the idea became more concrete.
+
+I then had to decide what form the game should take. A two-dimensional game initially seemed likely to lead toward a platformer, a format I did not want to make and which, to me, felt limiting for the kind of exploration I imagined. Three-dimensional development offered other possibilities, but it would also make the project considerably more complex, particularly when trying to define and consistently produce a visual style with the help of AI tools. I started to realize that graphics were not the point of the idea in the first place. If the heart of the game was discovering and collecting things, a world did not need to be rendered in real time to feel worth exploring.
+
+That brought to mind games such as Gladiatus, which showed me a way to play an online RPG without relying on a conventional real-time graphical world. I wanted to pursue a related text-based approach, while keeping the sense of an ongoing world and the gradual character development I enjoyed in my favorite MMORPGs. Text was not meant to be a shortcut or a limitation to work around. It became a deliberate choice that let me concentrate on the activities I cared about most: discovering, collecting, progressing, and finding another reason to return.
+
+The idea of the **reality nuclei** grew from the same desire for freedom. I did not want to commit the entire game to one fixed setting, such as a medieval fantasy world, a futuristic universe, or a particular historical period. I enjoy many different styles, and choosing only one would mean ruling out possibilities I wanted to explore. By connecting distinct realities, FL-RPG can move between those styles without pretending they all belong to the same conventional world. One nucleus might resemble the contemporary Earth; another might contain prehistoric life, science fiction, medieval fantasy, or stranger realities that do not fit familiar categories.
+
+This breadth is not intended to make the world arbitrary. Each nucleus should have its own identity, places, discoveries, resources, and reasons to explore it. The connection between nuclei provides a framework in which very different kinds of content can coexist, while collection and discovery give the player a consistent purpose across them.
+
+The original motivation remains the project's compass: to build the kind of text-based MMORPG I would want to play myself — a game where exploration leads to discoveries, discoveries feed collections, and long-term activities let me farm resources, develop a character, gain levels, and gradually reach goals that once felt out of reach. There should always be something new worth pursuing. Combat, economy, character development, and multiplayer systems can all contribute to that experience, but they should support this central idea rather than replace it.
+
 ## What works today
 
 ### Text-based exploration
@@ -57,7 +77,7 @@ The Gradle project is divided into four modules:
 | **client**                 | Text-based desktop client, server connection, player input, and presentation of received state.                                     |
 | **communication-protocol** | Typed client-server contract, messages and metadata, validation, JSON serialization, and presentation structures.                   |
 | **server**                 | WebSocket connections, sessions, message validation, action dispatch, event distribution, and periodic simulation-time advancement. |
-| **game-domain**            | Game state and rules: temporary characters, nuclei, actions, facts, interactions, exploration, movement, and activity lifecycle.    |
+| **game-domain**             | Game state and rules: temporary characters, nuclei, actions, facts, interactions, exploration, movement, and activity lifecycle.    |
 
 The architecture follows two important principles:
 
