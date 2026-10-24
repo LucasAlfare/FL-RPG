@@ -1,8 +1,7 @@
 package com.lucasalfare.flrpg.server
 
 import com.lucasalfare.flrpg.communicationprotocol.*
-import com.lucasalfare.flrpg.gamedomain.ActivityProgressDetails
-import com.lucasalfare.flrpg.gamedomain.Interaction
+import com.lucasalfare.flrpg.gamedomain.*
 import java.util.*
 
 internal val DefaultPreferredInteractionShortcuts: Map<String, String> = mapOf(
@@ -58,6 +57,7 @@ class InteractionPresentationPreparer(
     locationName: String?,
     movementDestinationName: String?,
     activityProgressDetails: List<ActivityProgressDetails> = emptyList(),
+    explorationResult: TransientExplorationResult? = null,
     baseRevision: Revision = Revision.ZERO,
     existingShortcuts: Map<String, String> = emptyMap()
   ): PreparedPresentation {
@@ -100,6 +100,8 @@ class InteractionPresentationPreparer(
         )
       )
     }
+
+    contextBlocks.addAll(explorationBlocks(explorationResult))
 
     if (activityProgressDetails.isNotEmpty()) {
       val protocolActivities = activityProgressDetails.map { details ->
@@ -156,6 +158,7 @@ class InteractionPresentationPreparer(
     movementDestinationName: String?,
     activityProgressDetails: List<ActivityProgressDetails> = emptyList(),
     cancelInteractions: List<Interaction> = emptyList(),
+    explorationResult: TransientExplorationResult? = null,
     baseRevision: Revision = Revision.ZERO,
     existingShortcuts: Map<String, String> = emptyMap()
   ): PreparedPresentation {
@@ -195,6 +198,8 @@ class InteractionPresentationPreparer(
         )
       )
     }
+
+    contextBlocks.addAll(explorationBlocks(explorationResult))
 
     if (activityProgressDetails.isNotEmpty()) {
       val protocolActivities = activityProgressDetails.map { details ->
@@ -278,6 +283,53 @@ class InteractionPresentationPreparer(
         messageId = MessageId(UUID.randomUUID().toString()), sessionId = sessionId, sequence = sequence
       ), document = prepared.document
     )
+  }
+
+  private fun explorationBlocks(result: TransientExplorationResult?): List<PresentationBlock> {
+    if (result == null) return emptyList()
+    return when (val op = result.result) {
+      is LookAroundSuccess -> buildList {
+        add(
+          PresentationBlock(
+            id = BlockId("exploration_area_description"),
+            content = BlockContent.Text(text = op.area.description, style = TextStyle.NORMAL),
+            title = op.area.name,
+            region = PresentationRegion.MAIN
+          )
+        )
+        if (op.knownElements.isNotEmpty()) {
+          add(
+            PresentationBlock(
+              id = BlockId("exploration_known_elements"), content = BlockContent.ItemsList(
+                items = op.knownElements.map { it.name }, isOrdered = false
+              ), title = "You notice", region = PresentationRegion.MAIN
+            )
+          )
+        }
+      }
+
+      is ExamineSuccess -> buildList {
+        add(
+          PresentationBlock(
+            id = BlockId("exploration_examination_details"),
+            content = BlockContent.Text(text = op.element.examinationDescription, style = TextStyle.NORMAL),
+            title = op.element.name,
+            region = PresentationRegion.MAIN
+          )
+        )
+        if (op.newlyDiscovered.isNotEmpty()) {
+          add(
+            PresentationBlock(
+              id = BlockId("exploration_new_discoveries"), content = BlockContent.ItemsList(
+                items = op.newlyDiscovered.map { it.name }, isOrdered = false
+              ), title = "New discoveries", region = PresentationRegion.MAIN
+            )
+          )
+        }
+      }
+
+      else -> emptyList()
+    }
   }
 
   private fun selectionIdFor(interaction: Interaction): String = "opt_${interaction.id.value}"

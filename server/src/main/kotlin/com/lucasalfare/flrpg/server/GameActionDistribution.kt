@@ -23,9 +23,7 @@ suspend fun distributeAudiences(
 
       val eventMessage = ServerEvent(
         metadata = MessageMetadata(
-          messageId = MessageId(UUID.randomUUID().toString()),
-          sessionId = targetSessionId,
-          sequence = Sequence.ZERO
+          messageId = MessageId(UUID.randomUUID().toString()), sessionId = targetSessionId, sequence = Sequence.ZERO
         ), type = protocolFact.name, payload = protocolFact.arguments
       )
 

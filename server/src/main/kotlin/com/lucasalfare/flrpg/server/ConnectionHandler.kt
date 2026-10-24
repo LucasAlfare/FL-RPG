@@ -130,6 +130,7 @@ suspend fun handleConnection(
                 val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
                 val cancelInteractions =
                   actionProcessor.availableInteractions(characterId).filter { it.actionName == "cancel_activity" }
+                val explorationResult = actionProcessor.currentExplorationResult(characterId)
 
                 offerState.updateMutex.withLock {
                   val preparedPrompt = presentationPreparer.preparePromptWithLocation(
@@ -138,6 +139,7 @@ suspend fun handleConnection(
                     movementDestinationName = movementDestinationName,
                     activityProgressDetails = activityProgressDetails,
                     cancelInteractions = cancelInteractions,
+                    explorationResult = explorationResult,
                     baseRevision = offerState.revision,
                     existingShortcuts = offerState.getPersistentShortcuts()
                   )
@@ -165,6 +167,7 @@ suspend fun handleConnection(
                 val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
                 val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
                 val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
+                val explorationResult = actionProcessor.currentExplorationResult(characterId)
 
                 offerState.updateMutex.withLock {
                   val preparedMenu = presentationPreparer.prepareWithLocation(
@@ -172,6 +175,7 @@ suspend fun handleConnection(
                     locationName = locationName,
                     movementDestinationName = movementDestinationName,
                     activityProgressDetails = activityProgressDetails,
+                    explorationResult = explorationResult,
                     baseRevision = offerState.revision,
                     existingShortcuts = offerState.getPersistentShortcuts()
                   )
@@ -283,6 +287,7 @@ suspend fun handleConnection(
                       actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
                     val cancelInteractions =
                       actionProcessor.availableInteractions(characterId).filter { it.actionName == "cancel_activity" }
+                    val explorationResult = actionProcessor.currentExplorationResult(characterId)
 
                     val offerState = offerRegistry.getOrCreate(currentSessionId)
                     offerState.updateMutex.withLock {
@@ -292,6 +297,7 @@ suspend fun handleConnection(
                         movementDestinationName = movementDestinationName,
                         activityProgressDetails = activityProgressDetails,
                         cancelInteractions = cancelInteractions,
+                        explorationResult = explorationResult,
                         baseRevision = offerState.revision,
                         existingShortcuts = offerState.getPersistentShortcuts()
                       )

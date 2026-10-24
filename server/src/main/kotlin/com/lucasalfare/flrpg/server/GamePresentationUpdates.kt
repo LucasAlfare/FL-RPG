@@ -56,6 +56,7 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
           val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
           val cancelInteractions =
             actionProcessor.availableInteractions(characterId).filter { it.actionName == "cancel_activity" }
+          val explorationResult = actionProcessor.currentExplorationResult(characterId)
           val offerState = offerRegistry.getOrCreate(sessionId)
           offerState.updateMutex.withLock {
             val preparedPrompt = presentationPreparer.preparePromptWithLocation(
@@ -64,6 +65,7 @@ suspend fun advanceTimeAndDistributeAndRefreshContext(
               movementDestinationName = movementDestinationName,
               activityProgressDetails = activityProgressDetails,
               cancelInteractions = cancelInteractions,
+              explorationResult = explorationResult,
               baseRevision = offerState.revision,
               existingShortcuts = offerState.getPersistentShortcuts()
             )
@@ -99,6 +101,7 @@ suspend fun presentAvailableInteractions(
   val locationName = actionProcessor.getCharacterLocationDisplayName(characterId)
   val movementDestinationName = actionProcessor.getCharacterMovementDestinationDisplayName(characterId)
   val activityProgressDetails = actionProcessor.nucleus.getActiveActivitiesProgressDetails(characterId)
+  val explorationResult = actionProcessor.currentExplorationResult(characterId)
 
   val offerState = offerRegistry.getOrCreate(sessionId)
   offerState.updateMutex.withLock {
@@ -108,6 +111,7 @@ suspend fun presentAvailableInteractions(
       locationName = locationName,
       movementDestinationName = movementDestinationName,
       activityProgressDetails = activityProgressDetails,
+      explorationResult = explorationResult,
       baseRevision = offerState.revision,
       existingShortcuts = existingShortcuts
     )
