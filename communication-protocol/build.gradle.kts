@@ -1,9 +1,20 @@
 plugins {
-  alias(libs.plugins.kotlin.jvm)
+  alias(libs.plugins.kotlin.multiplatform)
   alias(libs.plugins.kotlin.serialization)
 }
 
+kotlin {
+  jvmToolchain(25)
+
+  jvm()
+
+  js {
+    browser()
+    nodejs()
+  }
+}
+
 dependencies {
-  implementation(libs.kotlinx.serialization.json)
-  implementation(libs.kotlinx.coroutines.core)
+  commonMainImplementation(libs.kotlinx.serialization.json)
+  commonMainImplementation(libs.kotlinx.coroutines.core)
 }

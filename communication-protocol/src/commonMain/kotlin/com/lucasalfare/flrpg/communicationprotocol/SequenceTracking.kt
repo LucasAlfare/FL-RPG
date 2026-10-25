@@ -1,7 +1,6 @@
 package com.lucasalfare.flrpg.communicationprotocol
 
 import kotlinx.serialization.Serializable
-import java.util.concurrent.ConcurrentHashMap
 
 @Serializable
 enum class SequenceStatus {
@@ -12,25 +11,38 @@ enum class SequenceStatus {
   val isOutOfOrder: Boolean get() = this == GAP || this == STALE || this == OUT_OF_ORDER
 }
 
+@Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
+expect class PlatformLock() {
+  inline fun <T> lock(block: () -> T): T
+}
+
+@Suppress("EXPECT_ACTUAL_CLASSIFIERS_ARE_IN_BETA_WARNING")
+expect class ThreadSafeMessageIdSet() {
+  fun contains(element: MessageId): Boolean
+  fun add(element: MessageId): Boolean
+  fun clear()
+}
+
 class SequenceTracker(
   initialExpectedSequence: Sequence = Sequence.ZERO
 ) {
   var expectedSequence: Sequence = initialExpectedSequence
     private set
 
-  private val processedMessageIds = ConcurrentHashMap.newKeySet<MessageId>()
+  private val processedMessageIds = ThreadSafeMessageIdSet()
+  private val lock = PlatformLock()
 
-  @Synchronized
-  fun process(message: ProtocolMessage): SequenceStatus = process(message.messageId, message.sequence)
+  fun process(message: ProtocolMessage): SequenceStatus = lock.lock {
+    process(message.messageId, message.sequence)
+  }
 
-  @Synchronized
-  fun process(messageId: MessageId, sequence: Sequence): SequenceStatus {
+  fun process(messageId: MessageId, sequence: Sequence): SequenceStatus = lock.lock {
     if (processedMessageIds.contains(messageId)) {
-      return SequenceStatus.DUPLICATE
+      return@lock SequenceStatus.DUPLICATE
     }
 
     val distance = expectedSequence.distanceTo(sequence)
-    return when {
+    return@lock when {
       distance == 0L -> {
         processedMessageIds.add(messageId)
         expectedSequence = sequence.next()
@@ -47,10 +59,11 @@ class SequenceTracker(
     }
   }
 
-  fun isProcessed(messageId: MessageId): Boolean = processedMessageIds.contains(messageId)
+  fun isProcessed(messageId: MessageId): Boolean = lock.lock {
+    processedMessageIds.contains(messageId)
+  }
 
-  @Synchronized
-  fun reset(newExpectedSequence: Sequence = Sequence.ZERO) {
+  fun reset(newExpectedSequence: Sequence = Sequence.ZERO) = lock.lock {
     expectedSequence = newExpectedSequence
     processedMessageIds.clear()
   }

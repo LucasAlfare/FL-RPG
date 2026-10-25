@@ -5,9 +5,7 @@ rootProject.name = "FL-RPG"
 
 include(
   ":client",
-  ":server",
   ":communication-protocol",
+  ":server",
   ":game-domain",
-
-  ":communication-protocol-refactor",
 )

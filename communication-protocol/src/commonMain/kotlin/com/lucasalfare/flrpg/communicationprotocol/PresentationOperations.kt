@@ -23,7 +23,7 @@ fun PresentationDocument.applyPatch(patch: PresentationPatch): PresentationDocum
       }
 
       is PatchOperation.Remove -> {
-        val removed = workingBlocks.removeIf { it.id == op.blockId }
+        val removed = workingBlocks.removeAll { it.id == op.blockId }
         require(removed) { "Cannot remove block '${op.blockId.value}': block does not exist." }
       }
 

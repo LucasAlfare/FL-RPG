@@ -1,6 +1,7 @@
 package com.lucasalfare.flrpg.communicationprotocol
 
 import kotlinx.serialization.Serializable
+import kotlin.jvm.JvmInline
 
 @Serializable
 data class ProtocolVersion(val major: Int = 1, val minor: Int = 0) {
