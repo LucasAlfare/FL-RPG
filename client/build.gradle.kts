@@ -19,3 +19,7 @@ compose.desktop {
     mainClass = "com.lucasalfare.flrpg.client.ClientApplicationKt"
   }
 }
+
+kotlin {
+  jvmToolchain(21)
+}
