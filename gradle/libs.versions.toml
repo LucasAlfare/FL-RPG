@@ -9,6 +9,7 @@ fl-combat = "1.0.0"
 fl-world = "1.0.0"
 fl-economy = "1.2.0"
 zstd-jni = "1.5.7-14"
+ktoml = "0.7.1"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -41,3 +42,5 @@ fl-economy = { module = "com.github.LucasAlfare:FL-Economy", version.ref = "fl-e
 
 # Content Pack
 zstd-jni = { module = "com.github.luben:zstd-jni", version.ref = "zstd-jni" }
+ktoml-core = { module = "com.akuleshov7:ktoml-core", version.ref = "ktoml" }
+ktoml-file = { module = "com.akuleshov7:ktoml-file", version.ref = "ktoml" }
