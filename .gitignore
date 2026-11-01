@@ -1,5 +1,6 @@
 instructions
 .idea
+.env
 
 .gradle
 build/
