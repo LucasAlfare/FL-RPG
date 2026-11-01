@@ -6,7 +6,7 @@ FL-RPG is a prototype for a **text-based MMORPG focused on exploration and colle
 
 The long-term direction is a persistent multiplayer world organized around **reality nuclei**: contexts that may represent different places, planets, historical periods, or fictional settings. The planned starting point is Earth in 2026. Travel between nuclei should be something players discover and earn through exploration, conditions, mechanisms, and resources rather than an always-available world-selection menu.
 
-That is the game's direction, not a claim that all of these features are complete. The repository currently contains a functional early vertical slice of the supporting infrastructure and a small development scenario used to validate the basic interaction loop.
+That is the game's direction, not a claim that all of these features are complete. The repository currently contains a functional early vertical slice of the gameplay infrastructure, a small development scenario, and a content pipeline for authoring, compiling, protecting, and loading game data.
 
 ## Why FL-RPG exists
 
@@ -28,7 +28,35 @@ This breadth is not intended to make the world arbitrary. Each nucleus should ha
 
 The original motivation remains the project's compass: to build the kind of text-based MMORPG I would want to play myself — a game where exploration leads to discoveries, discoveries feed collections, and long-term activities let me farm resources, develop a character, gain levels, and gradually reach goals that once felt out of reach. There should always be something new worth pursuing. Combat, economy, character development, and multiplayer systems can all contribute to that experience, but they should support this central idea rather than replace it.
 
+### Why the content pipeline matters
+
+There is another part of the experience that I wanted to treat carefully from the beginning: **the content itself**. In a game centered on exploration, the world data is not merely configuration. It contains the places, relationships, discoveries, and secrets that make exploration meaningful. Exposing all of that authored material in the main source repository — or distributing it as readable files — would make it unnecessarily easy to inspect future content and spoil discoveries before players encounter them.
+
+For that reason, FL-RPG now has a dedicated content pipeline. The editable TOML sources live separately, in the private `FL-RPG-Content` repository. The public game repository contains the compiler and reader, and can receive only the compiled, encrypted content artifact. The FLCP format is documented and its structure is not treated as a secret; confidentiality comes from the cryptographic key, not from hiding the file format. A copy of the compiled package is not enough to read its protected payload without the corresponding key.
+
+This was a deliberate foundation, not an attempt to implement every future system prematurely. Establishing the boundary before the content library becomes large avoids having to reorganize and protect a growing body of authored material later. It also gives the project a consistent way to validate and deliver content as the game expands.
+
+The current implementation supports world and exploration data. The same packaging structure can be extended gradually with additional content sections — for example, items, collections, and achievements — when those gameplay systems are designed and implemented. That extensibility is a direction for the content format, not a claim that those systems already exist.
+
+Encryption protects the package while it is stored or distributed. It does not make content unknowable after the server has loaded it, nor does it hide information that the game intentionally presents to a player during gameplay. The goal is to keep private authored sources and unrevealed content out of casual inspection, while maintaining a clean boundary between content delivery and game rules.
+
 ## What works today
+
+### Content authoring, compilation, and loading
+
+Game content is authored as separate TOML files rather than being embedded directly into application code. The current development pack contains a manifest (`pack.toml`), world data (`world.toml`), and one TOML file per exploration area under `exploration/areas/`.
+
+The `content-compiler` module validates those sources and produces a binary **FLCP (FL Content Pack)** artifact. The current FLCP v1 pipeline is:
+
+`TOML → intermediate content models → CBOR → Zstandard → AES-256-GCM → .flcp`
+
+The FLCP file is a binary container with a documented header identifying its container version, serialization, compression, encryption, and key ID. The encrypted payload contains the compressed CBOR representation. The reader performs the reverse operations, authenticates and decrypts the payload, decompresses and decodes it, and validates compatibility and content structure.
+
+At server startup, the default application configuration reads the package identified by `FL_RPG_CONTENT_PACK_PATH` and uses `FL_RPG_CONTENT_KEY_ID` and `FL_RPG_CONTENT_KEY` to identify and decrypt it. The loaded content is converted into game-domain models through the server-side `ContentNucleusFactory`. The domain does not need to know how the content was authored, serialized, compressed, encrypted, or stored.
+
+The current server supports container version 1, schema version 1, and the `world` and `exploration` sections at version 1. It does not yet support hot reload, dynamic selection of multiple packs, a content editor, or key management.
+
+The intended workflow is to keep editable sources in the private content repository, compile them into an FLCP artifact, and distribute the compiled package with the server. The key must remain outside source control and must be available to the server process at runtime. The detailed source layout, TOML schema, validation rules, binary header, environment configuration, and Gradle commands are documented in [Content Pack System](docs/content_pack_system.md).
 
 ### Text-based exploration
 
@@ -36,7 +64,7 @@ The domain includes an exploration system built around areas, elements, and disc
 
 The development scenario includes an explorable area called **Starting Point**. Looking around reveals initial elements such as **Tree** and **Stones**. Examining an element can uncover more: examining the tree can reveal **Exposed Roots**, which can in turn reveal **Hidden Opening**. Results appear in the client, and available interactions refresh as the character discovers more elements.
 
-Area content and discovery links are authored as game data. The domain validates identifiers, references, and graph reachability so an area cannot contain invalid links or unreachable elements.
+The exploration data is now authored in the content sources and loaded into the domain as regular game models. The domain validates identifiers, references, and graph reachability so an area cannot contain invalid links or unreachable elements.
 
 ### Movement through a test world
 
@@ -70,49 +98,66 @@ The interface can display available choices, location and exploration informatio
 
 ## Project structure
 
-The Gradle project is divided into four modules:
+The Gradle project is divided into five modules:
 
-| Module                     | Responsibility                                                                                                                      |
-|----------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| **client**                 | Text-based desktop client, server connection, player input, and presentation of received state.                                     |
-| **communication-protocol** | Typed client-server contract, messages and metadata, validation, JSON serialization, and presentation structures.                   |
-| **server**                 | WebSocket connections, sessions, message validation, action dispatch, event distribution, and periodic simulation-time advancement. |
-| **game-domain**             | Game state and rules: temporary characters, nuclei, actions, facts, interactions, exploration, movement, and activity lifecycle.    |
+| Module                     | Responsibility                                                                                                                                            |
+|----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **client**                 | Text-based desktop client, server connection, player input, and presentation of received state.                                                           |
+| **communication-protocol** | Kotlin Multiplatform client-server contract, serializable messages and metadata, and presentation structures.                                             |
+| **server**                 | WebSocket connections, sessions, message validation, action dispatch, event distribution, content-pack loading, and periodic simulation-time advancement. |
+| **game-domain**            | Game state and rules: temporary characters, nuclei, actions, facts, interactions, exploration, movement, and activity lifecycle.                          |
+| **content-compiler**       | TOML source parsing and validation, content models, FLCP serialization and encryption, and package reading.                                               |
 
-The architecture follows two important principles:
+The architecture follows a few important principles:
 
 - **The server is authoritative.** The client requests actions and displays their results; it does not independently decide game rules or mutate the world state.
 - **The game provides meaning; libraries provide structure.** FL-RPG defines the meaning of its actions and rules. Supporting libraries can provide reusable mechanisms, but having a library as a dependency does not mean its corresponding game system is implemented.
+- **Content delivery is separate from gameplay rules.** The compiler and reader handle the content format and its protection. The server adapts the loaded content into domain models; the game domain does not depend on TOML, FLCP, CBOR, compression, encryption, Ktor, WebSockets, or the client interface.
 
-The domain does not directly depend on Ktor, WebSockets, or the Compose interface. The protocol is the contract between client and server, while the server adapts incoming messages into domain actions and turns their results into responses and presentation updates.
+The protocol is the contract between client and server, while the server adapts incoming messages into domain actions and turns their results into responses and presentation updates. The communication protocol currently declares JVM and JavaScript targets; the desktop client remains JVM-based.
 
 ## What is not implemented yet
 
 The difference between the game's direction and the current prototype is important. The following are still missing, among other things:
 
 - **Long-term persistence:** there is no database, complete account system, durable character identity, or saved progression. Current character identity and state are temporary; exploration discoveries are not a persistent record.
-- **Collection gameplay systems:** there is no complete inventory, collectible-item catalogue, persistent collection, achievement system, or collection progression. Collection is a core design goal, but not yet a completed gameplay system.
+- **Collection gameplay systems:** there is no complete inventory, collectible-item catalogue, persistent collection, achievement system, or collection progression. Collection is a core design goal, but not yet a completed gameplay system. The current content pack format only supports world and exploration sections.
 - **Character progression:** there is no complete system for levels, character development, or long-term progression.
 - **A multi-nucleus universe:** initial nucleus-related structures and exploration metadata exist, but there is no navigable universe of nuclei or travel between realities.
 - **A substantial game world:** the current scenario is small and exists to validate the technical foundations. The implemented exploration system does not imply that a large world with many regions and content already exists.
 - **Other gameplay systems:** combat, resource gathering, crafting, trading, quests, and equivalent systems are not implemented as complete FL-RPG gameplay. Dependencies on related libraries do not change that.
 - **Additional clients and production operation:** the current client is desktop. There is no finished web or mobile client, and the project is not a production deployment.
+- **Advanced content operations:** content is loaded during the server's default startup flow. There is no hot reload, multiple-pack orchestration, content editor, or automated key lifecycle management.
 
 Disconnecting removes the temporary character and its associated spatial state, including exploration state kept in memory. Therefore, **the project does not yet deliver the persistent world promised by its MMORPG direction**.
 
 ## Development direction
 
-The priority is to stabilize and expand the core gameplay loop without losing the intended identity: **explore, discover, and collect**. Session handling, actions, events, simulation time, and presentation exist to support that loop; they are not the end goal by themselves.
+The priority is to stabilize and expand the core gameplay loop without losing the intended identity: **explore, discover, and collect**. Session handling, actions, events, simulation time, content loading, and presentation exist to support that loop; they are not the end goal by themselves.
+
+The content pipeline provides a foundation for growing the amount of authored game data without coupling it to the source code or exposing the editable content repository. New content sections can be introduced as their corresponding gameplay systems become real requirements. Items, collections, and achievements are possible future additions, not implemented sections today.
 
 Over time, different nuclei may offer distinct settings and content — for example, other places, planets, historical periods, or fictional worlds. These examples describe the desired scope, not places currently available in the game. Travel between nuclei is also intended to be part of discovery and progression rather than a simple map-selection feature.
 
+## Documentation
+
+The `docs/` directory contains deeper technical references for the current implementation:
+
+- [Content Pack System](docs/content_pack_system.md) — private TOML sources, pack schema, validation, FLCP v1 container, cryptography, environment variables, compilation, and server loading.
+- [Exploration System](docs/exploration_system.md) — exploration areas, elements, discovery links, and domain behavior.
+- [Data Flow Lifecycle](docs/data_flow_lifecycle.md) — how game actions and facts move through the domain, server, protocol, and client.
+- [Communication Protocol](docs/communication_protocol.md) — client-server messages and protocol structures.
+- [FL-World](docs/fl-world.md) — world locations, connections, spatial state, time, and movement.
+
+The source code and automated tests remain the reference for implemented behavior. As the project is still a prototype, APIs, rules, formats, and the interface may change.
+
 ## Technology baseline
 
-- **Language and runtime:** Kotlin/JVM, with Java toolchain 25.
+- **Language:** Kotlin.
+- **Runtime:** JVM for the client, server, game domain, and content compiler. The communication protocol is Kotlin Multiplatform and currently declares JVM and JavaScript targets.
 - **Build system:** Gradle with Kotlin DSL.
 - **Server:** Ktor, Netty, and WebSockets.
 - **Client:** Compose for Desktop.
-- **Protocol serialization:** Kotlin Serialization and JSON.
+- **Communication protocol serialization:** Kotlin Serialization and JSON.
+- **Game content:** TOML authoring sources, CBOR serialization, Zstandard compression, AES-256-GCM encryption, and the binary FLCP v1 container.
 - **World and supporting libraries:** current integration with FL-World for locations, connections, spatial state, time, and movement. Other FL libraries are available as dependencies, but not all their systems are integrated into gameplay.
-
-The source code and automated tests are the reference for implemented behavior. As the project is still a prototype, APIs, rules, and the interface may change.
