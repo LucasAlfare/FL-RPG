@@ -6,6 +6,7 @@ plugins {
 dependencies {
   implementation(project(":communication-protocol"))
   implementation(project(":game-domain"))
+  implementation(project(":content-compiler"))
 
   implementation(libs.ktor.server.netty)
   implementation(libs.ktor.server.websockets)
