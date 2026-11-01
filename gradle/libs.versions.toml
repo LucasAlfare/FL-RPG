@@ -3,11 +3,12 @@ kotlin = "2.4.21"
 compose = "1.10.3"
 ktor = "3.6.0"
 coroutines = "1.11.0"
-serialization-json = "1.12.0-RC"
+serialization = "1.12.0-RC"
 fl-turns = "1.0.0"
 fl-combat = "1.0.0"
 fl-world = "1.0.0"
 fl-economy = "1.2.0"
+zstd-jni = "1.5.7-14"
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
@@ -19,7 +20,8 @@ jetbrains-compose = { id = "org.jetbrains.compose", version.ref = "compose" }
 [libraries]
 # Coroutines & Serialization
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
-kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization-json" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+kotlinx-serialization-cbor = { module = "org.jetbrains.kotlinx:kotlinx-serialization-cbor", version.ref = "serialization" }
 
 # Ktor Server
 ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
@@ -36,3 +38,6 @@ fl-turns = { module = "com.github.LucasAlfare:FL-Turns", version.ref = "fl-turns
 fl-combat = { module = "com.github.LucasAlfare:FL-Combat", version.ref = "fl-combat" }
 fl-world = { module = "com.github.LucasAlfare:FL-World", version.ref = "fl-world" }
 fl-economy = { module = "com.github.LucasAlfare:FL-Economy", version.ref = "fl-economy" }
+
+# Content Pack
+zstd-jni = { module = "com.github.luben:zstd-jni", version.ref = "zstd-jni" }
