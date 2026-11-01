@@ -8,4 +8,5 @@ include(
   ":communication-protocol",
   ":server",
   ":game-domain",
+  ":content-compiler"
 )

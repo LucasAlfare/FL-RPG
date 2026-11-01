@@ -1,5 +1,8 @@
+*.env
+*.flcp
 instructions
 .idea
+dev-content
 
 .gradle
 build/
