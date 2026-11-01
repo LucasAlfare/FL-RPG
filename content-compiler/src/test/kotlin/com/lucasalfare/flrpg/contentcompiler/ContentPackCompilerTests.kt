@@ -6,7 +6,6 @@ import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 import kotlin.test.*
 
-// TODO: this suit have 7 failing tests: rejects duplicate discovery links,rejects duplicate element ids inside arearejects initial_elements referencing unknown element,preserves text with commas quotes and newlines,compiles valid development-like content pack,rejects discovery referencing unknown element,rejects self-referencing discovery
 class ContentPackCompilerTests {
 
   private val dummyKey = ByteArray(32) { 1 }
