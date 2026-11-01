@@ -67,6 +67,8 @@ class ContentPackCompilerTests {
     location_id = "spawn"
     description = "You stand at a quiet clearing."
 
+    initial_elements = ["tree", "stones"]
+
     [[elements]]
     id = "tree"
     name = "Tree"
@@ -78,8 +80,6 @@ class ContentPackCompilerTests {
     name = "Stones"
     observation_description = "A cluster of moss-covered stones."
     examination_description = "Between the stones you spot a narrow gap."
-
-    initial_elements = ["tree", "stones"]
 
     [[discoveries]]
     from = "tree"
@@ -439,6 +439,8 @@ class ContentPackCompilerTests {
         location_id = "spawn"
         description = "Desc"
 
+        initial_elements = ["tree"]
+
         [[elements]]
         id = "tree"
         name = "Tree"
@@ -450,8 +452,6 @@ class ContentPackCompilerTests {
         name = "Another"
         observation_description = "obs2"
         examination_description = "exam2"
-
-        initial_elements = ["tree"]
       """.trimIndent()
     )
 
@@ -474,13 +474,13 @@ class ContentPackCompilerTests {
         location_id = "spawn"
         description = "Desc"
 
+        initial_elements = ["tree", "ghost"]
+
         [[elements]]
         id = "tree"
         name = "Tree"
         observation_description = "obs"
         examination_description = "exam"
-
-        initial_elements = ["tree", "ghost"]
       """.trimIndent()
     )
 
@@ -503,13 +503,13 @@ class ContentPackCompilerTests {
         location_id = "spawn"
         description = "Desc"
 
+        initial_elements = []
+
         [[elements]]
         id = "tree"
         name = "Tree"
         observation_description = "obs"
         examination_description = "exam"
-
-        initial_elements = []
       """.trimIndent()
     )
 
@@ -532,13 +532,13 @@ class ContentPackCompilerTests {
         location_id = "spawn"
         description = "Desc"
 
+        initial_elements = ["tree"]
+
         [[elements]]
         id = "tree"
         name = "Tree"
         observation_description = "obs"
         examination_description = "exam"
-
-        initial_elements = ["tree"]
 
         [[discoveries]]
         from = "tree"
@@ -565,13 +565,13 @@ class ContentPackCompilerTests {
         location_id = "spawn"
         description = "Desc"
 
+        initial_elements = ["tree"]
+
         [[elements]]
         id = "tree"
         name = "Tree"
         observation_description = "obs"
         examination_description = "exam"
-
-        initial_elements = ["tree"]
 
         [[discoveries]]
         from = "tree"
@@ -598,6 +598,8 @@ class ContentPackCompilerTests {
         location_id = "spawn"
         description = "Desc"
 
+        initial_elements = ["tree"]
+      
         [[elements]]
         id = "tree"
         name = "Tree"
@@ -609,8 +611,6 @@ class ContentPackCompilerTests {
         name = "Stones"
         observation_description = "obs"
         examination_description = "exam"
-
-        initial_elements = ["tree"]
 
         [[discoveries]]
         from = "tree"
@@ -642,19 +642,19 @@ class ContentPackCompilerTests {
     // Use TOML basic strings + escaped quotes and a real newline via \n
     // to avoid nested """ conflict with the Kotlin raw string.
     val areaContent = """
-    id = "spawn_area"
-    name = "Starting Point"
-    location_id = "spawn"
-    description = "A quiet clearing,\nwith \"quotes\" and\nmultiple lines."
+  id = "spawn_area"
+  name = "Starting Point"
+  location_id = "spawn"
+  description = "A quiet clearing,\nwith \"quotes\" and\nmultiple lines."
 
-    [[elements]]
-    id = "tree"
-    name = "Oak, tall"
-    observation_description = "A tall oak, \"weathered\" and old."
-    examination_description = "Looking closer,\nroots break the soil."
+  initial_elements = ["tree"]
 
-    initial_elements = ["tree"]
-  """.trimIndent()
+  [[elements]]
+  id = "tree"
+  name = "Oak, tall"
+  observation_description = "A tall oak, \"weathered\" and old."
+  examination_description = "Looking closer,\nroots break the soil."
+""".trimIndent()
 
     write(dir, "exploration/areas/spawn.toml", areaContent)
 
