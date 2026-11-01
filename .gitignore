@@ -1,6 +1,7 @@
+*.env
 instructions
 .idea
-.env
+dev-content
 
 .gradle
 build/
