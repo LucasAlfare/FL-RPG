@@ -6,6 +6,25 @@ plugins {
   alias(libs.plugins.jetbrains.compose) apply false
 }
 
+val developmentEnvironment = file("dev.env").takeIf { it.isFile }?.readLines()?.mapNotNull { line ->
+    val entry = line.trim()
+
+    if (entry.isEmpty() || entry.startsWith("#")) {
+      null
+    } else {
+      val separator = entry.indexOf('=')
+
+      if (separator <= 0) {
+        null
+      } else {
+        val key = entry.substring(0, separator).trim()
+        val value = entry.substring(separator + 1).trim().removeSurrounding("\"").removeSurrounding("'")
+
+        key to value
+      }
+    }
+  }?.toMap().orEmpty()
+
 subprojects {
   group = "com.lucasalfare"
   version = "1.0-SNAPSHOT"
@@ -14,6 +33,12 @@ subprojects {
     google()
     mavenCentral()
     maven { url = uri("https://jitpack.io") }
+  }
+
+  tasks.withType<JavaExec>().configureEach {
+    developmentEnvironment.forEach { (name, value) ->
+      environment(name, System.getenv(name) ?: value)
+    }
   }
 
   plugins.withId("org.jetbrains.kotlin.jvm") {

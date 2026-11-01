@@ -5,15 +5,13 @@ package com.lucasalfare.flrpg.contentcompiler
 import com.github.luben.zstd.Zstd
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.SealedSerializationApi
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.cbor.Cbor
-import kotlinx.serialization.descriptors.PrimitiveKind
-import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
-import kotlinx.serialization.descriptors.buildClassSerialDescriptor
-import kotlinx.serialization.descriptors.element
+import kotlinx.serialization.descriptors.*
 import kotlinx.serialization.encoding.*
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -360,6 +358,34 @@ private object FeatureInfoSerializer : KSerializer<FeatureInfo> {
   }
 }
 
+@OptIn(SealedSerializationApi::class)
+private object RecursiveContentValueDescriptor : SerialDescriptor {
+  private val delegate get() = ContentValueSerializer.descriptor
+
+  override val serialName get() = delegate.serialName
+  override val kind: SerialKind get() = delegate.kind
+  override val elementsCount get() = delegate.elementsCount
+  override val annotations get() = delegate.annotations
+
+  override fun getElementName(index: Int) = delegate.getElementName(index)
+  override fun getElementIndex(name: String) = delegate.getElementIndex(name)
+  override fun getElementAnnotations(index: Int) = delegate.getElementAnnotations(index)
+  override fun getElementDescriptor(index: Int) = delegate.getElementDescriptor(index)
+  override fun isElementOptional(index: Int) = delegate.isElementOptional(index)
+}
+
+private object RecursiveContentValueSerializer : KSerializer<ContentValue> {
+  override val descriptor: SerialDescriptor = RecursiveContentValueDescriptor
+
+  override fun serialize(encoder: Encoder, value: ContentValue) {
+    ContentValueSerializer.serialize(encoder, value)
+  }
+
+  override fun deserialize(decoder: Decoder): ContentValue {
+    return ContentValueSerializer.deserialize(decoder)
+  }
+}
+
 private object ContentValueSerializer : KSerializer<ContentValue> {
   override val descriptor = buildClassSerialDescriptor("ContentValue") {
     element<String>("type")
@@ -367,8 +393,8 @@ private object ContentValueSerializer : KSerializer<ContentValue> {
     element<Long>("integer", isOptional = true)
     element<Double>("float", isOptional = true)
     element<String>("string", isOptional = true)
-    element("array", ListSerializer(ContentValueSerializer).descriptor, isOptional = true)
-    element("object", MapSerializer(String.serializer(), ContentValueSerializer).descriptor, isOptional = true)
+    element("array", ListSerializer(RecursiveContentValueSerializer).descriptor, isOptional = true)
+    element("object", MapSerializer(String.serializer(), RecursiveContentValueSerializer).descriptor, isOptional = true)
   }
 
   override fun serialize(encoder: Encoder, value: ContentValue) {
@@ -400,13 +426,13 @@ private object ContentValueSerializer : KSerializer<ContentValue> {
 
         is ContentValue.ArrayValue -> {
           encodeStringElement(descriptor, 0, "array")
-          encodeSerializableElement(descriptor, 5, ListSerializer(ContentValueSerializer), value.value)
+          encodeSerializableElement(descriptor, 5, ListSerializer(RecursiveContentValueSerializer), value.value)
         }
 
         is ContentValue.ObjectValue -> {
           encodeStringElement(descriptor, 0, "object")
           encodeSerializableElement(
-            descriptor, 6, MapSerializer(String.serializer(), ContentValueSerializer), value.value
+            descriptor, 6, MapSerializer(String.serializer(), RecursiveContentValueSerializer), value.value
           )
         }
       }
@@ -430,9 +456,9 @@ private object ContentValueSerializer : KSerializer<ContentValue> {
           2 -> integerValue = decodeLongElement(descriptor, 2)
           3 -> floatValue = decodeDoubleElement(descriptor, 3)
           4 -> stringValue = decodeStringElement(descriptor, 4)
-          5 -> arrayValue = decodeSerializableElement(descriptor, 5, ListSerializer(ContentValueSerializer))
+          5 -> arrayValue = decodeSerializableElement(descriptor, 5, ListSerializer(RecursiveContentValueSerializer))
           6 -> objectValue = decodeSerializableElement(
-            descriptor, 6, MapSerializer(String.serializer(), ContentValueSerializer)
+            descriptor, 6, MapSerializer(String.serializer(), RecursiveContentValueSerializer)
           )
 
           CompositeDecoder.DECODE_DONE -> break

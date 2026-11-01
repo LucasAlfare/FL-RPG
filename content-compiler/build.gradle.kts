@@ -27,27 +27,25 @@ tasks.register<JavaExec>("compileDevelopmentContentPack") {
   val contentSourceDir = project.findProperty("contentSourceDir") as String?
     ?: throw GradleException("Missing required property -PcontentSourceDir pointing to the private content source directory.")
 
-  val contentPackOutput = project.findProperty("contentPackOutput") as String?
-    ?: rootProject.layout.projectDirectory.dir("content/packs").file("development.flcp").asFile.absolutePath
+  val contentPackOutput =
+    project.findProperty("contentPackOutput") as String? ?: rootProject.layout.projectDirectory.dir("content/packs")
+      .file("development.flcp").asFile.absolutePath
 
-  args = listOf(contentSourceDir, contentPackOutput)
-
-  // Forward crypto env vars if present; never print or log their values.
-  environment(
-    "FL_RPG_CONTENT_KEY_ID",
-    System.getenv("FL_RPG_CONTENT_KEY_ID") ?: ""
-  )
-  environment(
-    "FL_RPG_CONTENT_KEY",
-    System.getenv("FL_RPG_CONTENT_KEY") ?: ""
+  args = listOf(
+    rootProject.file(contentSourceDir).absolutePath, contentPackOutput
   )
 
   doFirst {
-    if (System.getenv("FL_RPG_CONTENT_KEY_ID").isNullOrBlank()) {
-      throw GradleException("Environment variable FL_RPG_CONTENT_KEY_ID is required and must not be blank.")
+    if (environment["FL_RPG_CONTENT_KEY_ID"].toString().isBlank()) {
+      throw GradleException(
+        "Environment variable FL_RPG_CONTENT_KEY_ID is required and must not be blank."
+      )
     }
-    if (System.getenv("FL_RPG_CONTENT_KEY").isNullOrBlank()) {
-      throw GradleException("Environment variable FL_RPG_CONTENT_KEY is required and must not be blank.")
+
+    if (environment["FL_RPG_CONTENT_KEY"].toString().isBlank()) {
+      throw GradleException(
+        "Environment variable FL_RPG_CONTENT_KEY is required and must not be blank."
+      )
     }
   }
 }
