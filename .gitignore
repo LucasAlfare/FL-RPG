@@ -1,4 +1,5 @@
 *.env
+*.flcp
 instructions
 .idea
 dev-content

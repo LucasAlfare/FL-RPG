@@ -345,6 +345,7 @@ class GameDomainTests {
     assertEquals(ActivityStatus.RUNNING, nucleus.getActivity(started.activityId)?.status)
   }
 
+  // TODO: this test failed after implement content compiler changes; attempt fix
   @Test
   fun advanceTime_completesMovementAndProducesFact() {
     val nucleus = Nucleus(NucleusId("nucleus"))
@@ -364,8 +365,6 @@ class GameDomainTests {
     assertTrue(
       result is GameActionResult.ActivityStarted, "Movement should start an activity, but received: $result"
     )
-
-    val started = result as GameActionResult.ActivityStarted
 
     assertEquals(
       WorldLocationId("spawn"), nucleus.world.state.getLocation(entityId)
@@ -388,7 +387,7 @@ class GameDomainTests {
 
     assertEquals(1, activityCompleted.size)
     assertEquals(
-      started.activityId.value, activityCompleted.single().arguments["activityId"]
+      result.activityId.value, activityCompleted.single().arguments["activityId"]
     )
 
     assertEquals(
@@ -396,7 +395,7 @@ class GameDomainTests {
     )
 
     assertEquals(
-      ActivityStatus.COMPLETED, nucleus.getActivity(started.activityId)?.status
+      ActivityStatus.COMPLETED, nucleus.getActivity(result.activityId)?.status
     )
   }
 
@@ -423,6 +422,7 @@ class GameDomainTests {
     assertEquals(nucleus.world.getMovement(entityId)?.isInProgress, true)
   }
 
+  // TODO: this test failed after implement content compiler changes; attempt fix
   @Test
   fun movementCompletionProducesExpectedFactOnce() {
     val nucleus = Nucleus(NucleusId("nucleus"))
